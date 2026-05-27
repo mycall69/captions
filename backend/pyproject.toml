@@ -55,7 +55,7 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "S"]
 ignore = ["E501", "S101"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101"]
+"tests/**/*.py" = ["S101", "S110", "SIM105"]
 
 # ── Black ────────────────────────────────────────────────────────────────────
 [tool.black]
@@ -87,4 +87,9 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 filterwarnings = [
   "ignore::DeprecationWarning",
+]
+markers = [
+  "integration: API + DB 통합 테스트",
+  "workers: Celery 워커 태스크 테스트",
+  "media: 미디어/자막 정렬 검증 테스트",
 ]
