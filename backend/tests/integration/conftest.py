@@ -109,6 +109,15 @@ async def client(db_session: AsyncSession) -> AsyncIterator[object]:
     fastapi_app.dependency_overrides[_real_jobs_service] = _override_jobs_service
     fastapi_app.dependency_overrides[_real_event_bus] = _override_event_bus
 
+    # T120: rate limit 카운터 격리 — 테스트 간 limit 누적을 막기 위해 모든 storage 를 reset.
+    # ``Limiter._storage`` (limits.storage) 의 ``reset()`` 은 in-memory key 전체를 비운다.
+    limiter = getattr(fastapi_app.state, "limiter", None)
+    if limiter is not None:
+        try:
+            limiter._storage.reset()
+        except (AttributeError, NotImplementedError):
+            pass
+
     # Celery chain 디스패치 억제
     get_settings.cache_clear()
     os.environ["DISABLE_CHAIN_DISPATCH"] = "true"

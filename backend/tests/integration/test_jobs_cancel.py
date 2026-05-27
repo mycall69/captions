@@ -120,6 +120,14 @@ async def cancel_client(
     fastapi_app.dependency_overrides[_real_jobs_service] = _override_jobs_service
     fastapi_app.dependency_overrides[_real_event_bus] = _override_event_bus
 
+    # T120: rate limit 카운터 격리 — 테스트 간 limit 누적을 막기 위해 storage reset.
+    limiter = getattr(fastapi_app.state, "limiter", None)
+    if limiter is not None:
+        try:
+            limiter._storage.reset()
+        except (AttributeError, NotImplementedError):
+            pass
+
     try:
         async with AsyncClient(
             transport=ASGITransport(app=fastapi_app), base_url="http://test"

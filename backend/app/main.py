@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRouter
 
+from app.api.v1.middleware.rate_limit import RateLimitMiddleware, build_limiter
 from app.api.v1.middleware.request_id import RequestIdMiddleware
 from app.core.config import get_settings
 from app.core.exceptions import install_exception_handlers
@@ -53,10 +54,16 @@ def create_app() -> FastAPI:
     install_exception_handlers(app)
 
     # 미들웨어 등록 (add_middleware는 역순으로 실행됨 — 마지막 추가 = 가장 바깥쪽)
-    # 1. RequestIdMiddleware 먼저 추가 → CORS 안쪽에서 실행
+    # 1. RateLimitMiddleware 가장 먼저 추가 → 가장 안쪽 (RequestId 다음 단계)
+    #    → 모든 통과 요청에 request_id 가 이미 부여된 뒤 limit 검사 → 로그 추적 가능
+    limiter = build_limiter()
+    app.state.limiter = limiter  # SlowAPI 표준 위치 — 향후 데코레이터 확장 호환
+    app.add_middleware(RateLimitMiddleware, limiter=limiter)
+
+    # 2. RequestIdMiddleware → CORS 안쪽 + RateLimit 바깥쪽에서 실행
     app.add_middleware(RequestIdMiddleware, header_name=settings.request_id_header)
 
-    # 2. CORSMiddleware 나중에 추가 → 가장 바깥쪽에서 실행 (인바운드 최초 진입)
+    # 3. CORSMiddleware 나중에 추가 → 가장 바깥쪽에서 실행 (인바운드 최초 진입)
     #    OPTIONS preflight도 RequestIdMiddleware까지 도달하므로 request_id 부여됨
     app.add_middleware(
         CORSMiddleware,

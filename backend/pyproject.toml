@@ -92,4 +92,5 @@ markers = [
   "integration: API + DB 통합 테스트",
   "workers: Celery 워커 태스크 테스트",
   "media: 미디어/자막 정렬 검증 테스트",
+  "perf: 성능 검증 (SC-002 / SC-005 / SC-007)",
 ]
