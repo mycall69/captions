@@ -180,6 +180,8 @@ export function useJobEvents(
       return;
     }
 
+    // jobId/enabled 가 바뀔 때 이전 작업의 이벤트 버퍼를 비운다 — 페이지 전환 시 잔여 표시 방지.
+    setEvents([]);
     setConnectionState('connecting');
 
     let closed = false;

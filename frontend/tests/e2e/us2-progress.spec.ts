@@ -86,10 +86,12 @@ test.describe('US2: 작업 진행 상황 실시간 가시화 (P2 acceptance)', (
       const progressBar = page.locator('[data-testid="stage-progress-bar"]');
       await expect(progressBar).toBeVisible();
 
-      // 5) 마지막 이벤트가 도달한 후 rendering 노드가 current 상태여야 한다.
-      //    구현체가 data-stage / data-state 또는 class 로 표시할 수 있으므로
-      //    "현재 단계" 라벨 텍스트 가시성을 대신 검증한다.
-      await expect(page.getByText(/렌더|rendering/i)).toBeVisible();
+      // 5) 마지막 이벤트(rendering 진입)가 도달한 후 rendering 노드가 current 상태여야 한다.
+      //    정적 라벨 텍스트는 SSE 상태와 무관하게 항상 보이므로, data-state 속성으로 검증한다.
+      await expect(progressBar.locator('[data-stage="rendering"]')).toHaveAttribute(
+        'data-state',
+        'current',
+      );
     },
   );
 

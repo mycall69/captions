@@ -85,27 +85,11 @@ export default function JobPage() {
             <h2 className="text-base font-semibold">단계 진행</h2>
             <StatusBadge status={job.status} />
           </div>
-          <StageProgressBar status={job.status} errorStage={job.error_stage ?? null} />
-          {typeof job.progress === 'number' && job.status !== 'failed' && (
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>현재 단계 진행률</span>
-                <span>{Math.round((job.progress ?? 0) * 100)}%</span>
-              </div>
-              <div
-                className="h-2 w-full overflow-hidden rounded-full bg-muted"
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round((job.progress ?? 0) * 100)}
-              >
-                <div
-                  className="h-full bg-violet-500 transition-all"
-                  style={{ width: `${Math.round((job.progress ?? 0) * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
+          <StageProgressBar
+            status={job.status}
+            errorStage={job.error_stage ?? null}
+            progress={job.progress ?? null}
+          />
         </section>
 
         {job.status === 'failed' && (

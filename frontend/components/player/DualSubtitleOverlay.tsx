@@ -1,6 +1,9 @@
 'use client';
 import type { SubtitleOrder } from '@/lib/stores/playerStore';
 
+// AutoSubtitleBadge 의 정본은 StatusBadge.tsx 에 있다 — 재-export 로 호환성을 유지한다.
+export { AutoSubtitleBadge } from '@/components/job-list/StatusBadge';
+
 export interface DualCue {
   start_ms: number;
   end_ms: number;
@@ -42,16 +45,5 @@ export function DualSubtitleOverlay({
     >
       {order === 'source-first' ? <>{sourceEl}{translatedEl}</> : <>{translatedEl}{sourceEl}</>}
     </div>
-  );
-}
-
-export function AutoSubtitleBadge() {
-  return (
-    <span
-      data-testid="auto-subtitle-badge"
-      className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-    >
-      🤖 자동 자막 기반
-    </span>
   );
 }

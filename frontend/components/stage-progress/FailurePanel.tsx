@@ -19,15 +19,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-
-// 단계 영문 → 한국어 (StageProgressBar/StageLog 와 일관)
-const STAGE_LABEL: Record<string, string> = {
-  pending: '대기',
-  downloading: '다운로드',
-  subtitle_processing: '자막 처리',
-  translating: '번역',
-  rendering: '렌더링',
-};
+import { STAGE_LABEL_KO, type JobStatus } from '@/lib/i18n/jobLabels';
 
 // error_code → 사용자 친화적 부제 (서버가 error_message 를 한국어로 제공하지만,
 // 코드 기반 보조 라벨이 일관된 톤으로 유용함).
@@ -79,7 +71,9 @@ export function FailurePanel({
 
   const headline =
     (errorCode && ERROR_CODE_LABEL[errorCode]) ?? '작업이 실패했습니다';
-  const stageLabel = errorStage ? STAGE_LABEL[errorStage] ?? errorStage : null;
+  const stageLabel = errorStage
+    ? STAGE_LABEL_KO[errorStage as JobStatus] ?? errorStage
+    : null;
 
   // "다시 시도" — 동일 URL 을 querystring 으로 prefill 하여 메인(S1)으로 이동.
   // 자동 재제출은 사용자 의도(이중 비용)를 명시적으로 확인해야 하므로 prefill 만 수행한다.

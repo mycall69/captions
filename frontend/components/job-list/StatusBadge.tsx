@@ -12,23 +12,13 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import type { components } from '@/lib/api/types.gen';
+import { STATUS_BADGE_LABEL_KO } from '@/lib/i18n/jobLabels';
 
 export type JobStatus = components['schemas']['JobStatus'];
 
 interface StatusBadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   status: JobStatus;
 }
-
-// 한국어 라벨 — 와이어프레임 § 단계 진행 노드명과 정렬한다.
-const STATUS_LABEL: Record<JobStatus, string> = {
-  pending: '대기 중',
-  downloading: '다운로드 중',
-  subtitle_processing: '자막 처리 중',
-  translating: '번역 중',
-  rendering: '렌더링 중',
-  completed: '완료',
-  failed: '실패',
-};
 
 // 시각 토큰 — 각 status 가 서로 다른 className 시그니처를 갖도록 분리한다.
 // data-status 속성으로도 식별 가능 (테스트 / 디버깅 / e2e 친화).
@@ -54,7 +44,9 @@ const STATUS_ICON: Record<JobStatus, string> = {
 };
 
 export function StatusBadge({ status, className, ...rest }: StatusBadgeProps) {
-  const label = STATUS_LABEL[status];
+  const label = STATUS_BADGE_LABEL_KO[status];
+  // role="status" / aria-label 은 가시 텍스트가 이미 동일 정보를 전달하므로 제거.
+  // (목록에 다수 배치될 때 polite live region 으로 동작하는 부작용을 막는다.)
   return (
     <span
       data-status={status}
@@ -64,8 +56,6 @@ export function StatusBadge({ status, className, ...rest }: StatusBadgeProps) {
         STATUS_STYLE[status],
         className,
       )}
-      role="status"
-      aria-label={label}
       {...rest}
     >
       <span aria-hidden className="font-bold">

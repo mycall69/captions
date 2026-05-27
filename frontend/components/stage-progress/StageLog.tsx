@@ -17,6 +17,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import type { JobStatus } from '@/components/job-list/StatusBadge';
+import { STAGE_LABEL_KO } from '@/lib/i18n/jobLabels';
 
 /**
  * SSE 이벤트의 frontend-side normalized 표현.
@@ -48,17 +49,6 @@ interface StageLogProps {
   events: JobEvent[];
   className?: string;
 }
-
-// stage / status 의 한국어 라벨 — StageProgressBar / StatusBadge 와 일관.
-const STAGE_LABEL: Record<string, string> = {
-  pending: '대기',
-  downloading: '다운로드',
-  subtitle_processing: '자막 처리',
-  translating: '번역',
-  rendering: '렌더링',
-  completed: '완료',
-  failed: '실패',
-};
 
 // 시간 포맷 — HH:mm:ss (사용자 로케일).
 function formatTime(iso: string): string {
@@ -105,10 +95,13 @@ export function StageLog({ events, className }: StageLogProps) {
       data-testid="stage-log"
       className={cn('space-y-1 font-mono text-sm', className)}
       aria-label="단계별 로그"
+      aria-live="polite"
+      role="log"
     >
       {events.map((ev) => {
         const stageKey = (ev.stage ?? ev.status ?? '') as string;
-        const stageLabel = STAGE_LABEL[stageKey] ?? stageKey ?? '';
+        const stageLabel =
+          STAGE_LABEL_KO[stageKey as JobStatus] ?? stageKey ?? '';
         return (
           <li
             key={ev.event_id}

@@ -26,7 +26,11 @@ export function jobQueryKey(jobId: string): ['job', string] {
 export function useJob(jobId: string | null | undefined) {
   return useQuery({
     queryKey: jobId ? jobQueryKey(jobId) : ['job', ''],
-    queryFn: async () => apiFetch<Job>(`/jobs/${jobId}`),
+    queryFn: async () => {
+      // enabled: Boolean(jobId) 로 호출이 차단되지만, 타입 narrow 를 위해 명시 가드.
+      if (!jobId) throw new Error('jobId required');
+      return apiFetch<Job>(`/jobs/${jobId}`);
+    },
     enabled: Boolean(jobId),
     // 진행 중인 작업은 SSE 가 갱신을 책임지므로 refetch 비활성화.
     refetchOnWindowFocus: false,
