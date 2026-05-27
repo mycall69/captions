@@ -11,6 +11,8 @@ FK ondelete="CASCADE": 부모 video_job 삭제 시 모든 자식 행이 자동 �
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -70,18 +72,18 @@ class VideoJob(Base):
     # subtitle_source 허용 값: manual | auto
     subtitle_source: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
-    completed_at: Mapped[object] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -145,7 +147,7 @@ class SubtitleTrack(Base):
 
     cue_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
@@ -234,12 +236,12 @@ class TranslationTask(Base):
     # status 허용 값: queued | running | succeeded | failed
     status: Mapped[str] = mapped_column(Text, nullable=False)
 
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
@@ -277,12 +279,12 @@ class RenderTask(Base):
     # status 허용 값: queued | running | succeeded | failed
     status: Mapped[str] = mapped_column(Text, nullable=False)
 
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
-    updated_at: Mapped[object] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
@@ -320,7 +322,7 @@ class VideoAsset(Base):
     mime_type: Mapped[str] = mapped_column(Text, nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
@@ -359,7 +361,7 @@ class JobEvent(Base):
     # SSE payload와 동일 형식의 JSON (Text 컬럼에 JSON 직렬화 저장)
     payload: Mapped[str] = mapped_column(Text, nullable=False)
 
-    created_at: Mapped[object] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
