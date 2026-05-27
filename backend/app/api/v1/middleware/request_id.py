@@ -6,7 +6,7 @@
 3. 응답 헤더에 포함 → 클라이언트가 요청 추적에 활용
 """
 
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
