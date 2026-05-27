@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AppHeader } from '@/components/header/AppHeader';
+import { Providers } from './providers';
 
 export const metadata: Metadata = {
   title: 'Bilingual Subtitle Studio',
@@ -11,8 +12,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ko" className="dark">
       <body>
-        <AppHeader />
-        <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+        <Providers>
+          <AppHeader />
+          <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+        </Providers>
       </body>
     </html>
   );
