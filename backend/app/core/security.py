@@ -67,10 +67,7 @@ def parse_youtube_url(url: str) -> str:
     Raises:
         InvalidUrlError: 허용하지 않는 호스트, playlist URL, ID 추출 불가.
     """
-    try:
-        parsed = urlparse(url)
-    except Exception as exc:
-        raise InvalidUrlError("URL 파싱에 실패했습니다.") from exc
+    parsed = urlparse(url)
 
     # 스킴 확인
     if parsed.scheme not in ("http", "https"):
@@ -114,9 +111,10 @@ def parse_youtube_url(url: str) -> str:
     # 영상 ID 추출
     video_id = _extract_video_id(parsed)
     if video_id is None:
+        # 사용자 입력 URL은 자격증명 / 트래킹 토큰을 포함할 수 있어 응답 본문에 노출하지 않는다.
         raise InvalidUrlError(
             "유효한 YouTube 영상 URL이 아닙니다. 영상 ID를 찾을 수 없습니다.",
-            details={"reason": "영상 ID 추출 실패", "url": url},
+            details={"reason": "영상 ID 추출 실패", "host": hostname},
         )
 
     return video_id

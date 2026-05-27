@@ -37,6 +37,8 @@ def configure_logging() -> None:
         # 프로덕션: JSON 줄 단위 출력
         renderer = structlog.processors.JSONRenderer()
 
+    # structlog 자체 logger와 stdlib logger 모두 동일한 renderer로 통일하기 위해
+    # LoggerFactory (stdlib bridge)를 사용하고 wrap_for_formatter로 dict를 넘긴다.
     structlog.configure(
         processors=[
             *shared_processors,
@@ -46,11 +48,11 @@ def configure_logging() -> None:
             logging.getLevelName(settings.log_level.upper())
         ),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
-    # stdlib logging도 structlog으로 라우팅
+    # stdlib logger와 structlog 모두 동일한 ProcessorFormatter로 처리.
     formatter = structlog.stdlib.ProcessorFormatter(
         processor=renderer,
         foreign_pre_chain=shared_processors,
