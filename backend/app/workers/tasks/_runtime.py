@@ -145,7 +145,12 @@ def asset_repo(session: AsyncSession) -> SqlVideoAssetRepository:
 
 
 def set_event_bus_for_test(bus: BusLike | None) -> None:
-    """테스트에서 EventBus stub 을 주입한다 (None 이면 기본 동작 복원)."""
+    """테스트에서 EventBus stub 을 주입한다 (None 이면 기본 동작 복원).
+
+    참고: ``tests/workers/conftest.py::_inject_event_bus`` 가 ``autouse=True`` 로
+    설정돼 있어, 모든 워커 테스트는 별도 설정 없이 noop bus 를 자동으로 받는다.
+    이벤트 발행 자체를 검증하는 테스트는 ``fake_event_bus`` 등으로 명시적으로 override 한다.
+    """
     global _EVENT_BUS_OVERRIDE  # noqa: PLW0603
     _EVENT_BUS_OVERRIDE = bus
 

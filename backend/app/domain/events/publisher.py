@@ -218,6 +218,8 @@ class JobEventPublisher:
         await self._repo.update_payload(row, json.dumps(payload, ensure_ascii=False))
 
         # 3) Redis 채널 publish — 실패 시 rollback + re-raise
+        # BaseException: 취소·시스템 종료(KeyboardInterrupt 등)까지 포함해
+        # 무조건 rollback 후 재발생시켜 원자성을 보장한다.
         try:
             await self._bus.publish(job_channel(job_id), payload)
         except BaseException:

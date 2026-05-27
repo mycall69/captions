@@ -16,6 +16,7 @@ from typing import Any
 
 import structlog
 
+from app.core.exceptions import IllegalStateTransitionError
 from app.infrastructure.storage.filesystem import JobStorage
 from app.workers.celery_app import celery_app
 from app.workers.tasks._runtime import (
@@ -84,15 +85,24 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
             # 이미 downloading 이후 상태이면 transition 건너뜀
             previous_job = await repo.get(job_id)
             previous_status = previous_job.status if previous_job else None
-            with contextlib.suppress(Exception):
+            # 상태 전이 위법(예: 이미 종결 상태)은 무시하되, publish 예외는 외부 except 로 전파한다.
+            transition_ok = True
+            try:
                 await service.transition_to(job_id, JobStatus.downloading)
-                if previous_status != JobStatus.downloading:
-                    # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
-                    await publisher.publish_state_changed(
-                        job_id=job_id,
-                        previous_status=previous_status or JobStatus.pending,
-                        new_status=JobStatus.downloading,
-                    )
+            except IllegalStateTransitionError as exc:
+                transition_ok = False
+                logger.warning(
+                    "worker.download.transition_skipped",
+                    job_id=job_id,
+                    error=str(exc),
+                )
+            if transition_ok and previous_status != JobStatus.downloading:
+                # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 외부 suppress 제거
+                await publisher.publish_state_changed(
+                    job_id=job_id,
+                    previous_status=previous_status or JobStatus.pending,
+                    new_status=JobStatus.downloading,
+                )
 
             if output_path.exists():
                 size = output_path.stat().st_size
@@ -104,7 +114,7 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
                         mime_type=mimetypes.guess_type("video.mp4")[0] or "video/mp4",
                         byte_size=size,
                     )
-                # 원자성: publish 실패 시 자산 등록까지 함께 롤백되도록 suppress 제거
+                # 원자성: publish 실패 시 자산 등록까지 함께 롤백되도록 외부 suppress 제거
                 await publisher.publish_progress(
                     job_id=job_id,
                     status=JobStatus.downloading,

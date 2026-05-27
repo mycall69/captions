@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import structlog
 
+from app.core.exceptions import IllegalStateTransitionError
 from app.domain.jobs.models import Lang
 from app.workers.celery_app import celery_app
 from app.workers.tasks._runtime import (
@@ -232,11 +233,14 @@ async def _get_job_info(job_id: str) -> tuple[str, Path] | None:
 
 
 async def _publish_info(*, job_id: str, code: str, message: str) -> None:
-    """``job.info`` 비차단성 알림을 발행한다 (자동 자막 fallback 등)."""
+    """``job.info`` 비차단성 알림을 발행한다 (자동 자막 fallback 등).
+
+    publish 실패 시 publisher 가 세션을 롤백한 뒤 예외를 재발생시키므로
+    호출자(`_execute_subtitles`) 의 `contextlib.suppress` 가 이를 처리한다.
+    """
     async with task_session() as session:
         publisher = event_publisher(session)
-        with contextlib.suppress(Exception):
-            await publisher.publish_info(job_id=job_id, code=code, message=message)
+        await publisher.publish_info(job_id=job_id, code=code, message=message)
 
 
 async def _transition_state(job_id: str) -> None:
@@ -251,15 +255,23 @@ async def _transition_state(job_id: str) -> None:
 
         previous_job = await repo.get(job_id)
         previous_status = previous_job.status if previous_job else JobStatus.downloading
-        with contextlib.suppress(Exception):
+        # 상태 전이 위법(예: 이미 종결 상태)은 무시하되, publish 예외는 호출자로 전파한다.
+        try:
             await service.transition_to(job_id, JobStatus.subtitle_processing)
-            if previous_status != JobStatus.subtitle_processing:
-                # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
-                await publisher.publish_state_changed(
-                    job_id=job_id,
-                    previous_status=previous_status,
-                    new_status=JobStatus.subtitle_processing,
-                )
+        except IllegalStateTransitionError as exc:
+            logger.warning(
+                "worker.extract.transition_skipped",
+                job_id=job_id,
+                error=str(exc),
+            )
+            return
+        if previous_status != JobStatus.subtitle_processing:
+            # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 외부 suppress 제거
+            await publisher.publish_state_changed(
+                job_id=job_id,
+                previous_status=previous_status,
+                new_status=JobStatus.subtitle_processing,
+            )
 
 
 async def _mark_failed(job_id: str, message: str) -> None:
@@ -269,20 +281,28 @@ async def _mark_failed(job_id: str, message: str) -> None:
 
         service = JobsService(jobs_repo(session))
         publisher = event_publisher(session)
-        with contextlib.suppress(Exception):
+        # 상태 전이 위법(예: 이미 종결 상태)은 무시하되, publish 예외는 호출자로 전파한다.
+        try:
             await service.mark_failed(
                 job_id,
                 error_stage="subtitle_processing",
                 error_code="SUBTITLE_NOT_FOUND",
                 error_message=message,
             )
-            # 원자성: publish 실패 시 mark_failed 까지 함께 롤백되도록 suppress 제거
-            await publisher.publish_failed(
+        except IllegalStateTransitionError as exc:
+            logger.warning(
+                "worker.extract.mark_failed_skipped",
                 job_id=job_id,
-                error_stage="subtitle_processing",
-                error_code="SUBTITLE_NOT_FOUND",
-                error_message=message,
+                error=str(exc),
             )
+            return
+        # 원자성: publish 실패 시 mark_failed 까지 함께 롤백되도록 외부 suppress 제거
+        await publisher.publish_failed(
+            job_id=job_id,
+            error_stage="subtitle_processing",
+            error_code="SUBTITLE_NOT_FOUND",
+            error_message=message,
+        )
 
 
 async def _save_subtitle_track(
