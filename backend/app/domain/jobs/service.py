@@ -100,6 +100,27 @@ class JobsService:
             )
         return job
 
+    async def list_recent(
+        self,
+        *,
+        limit: int,
+        cursor: str | None = None,
+        status_filter: list[JobStatus] | None = None,
+    ) -> tuple[list[VideoJob], str | None]:
+        """최근 작업 목록을 cursor 페이지네이션으로 조회한다.
+
+        US3 / FR-029, FR-030 — 최근 작업 카드용 데이터 소스. repository 의
+        list_recent 를 그대로 위임한다. (서비스 계층에서는 추가 정책 없음.)
+
+        Returns:
+            (items, next_cursor): repository 결과 그대로 전달.
+        """
+        return await self._repo.list_recent(
+            limit=limit,
+            cursor=cursor,
+            status_filter=status_filter,
+        )
+
     async def transition_to(
         self,
         job_id: str,

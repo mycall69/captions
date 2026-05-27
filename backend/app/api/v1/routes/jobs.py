@@ -1,9 +1,10 @@
-"""T077, T078, T103: /v1/jobs 라우터 — 작업 생성, 조회, 취소 엔드포인트.
+"""T077, T078, T103, T115: /v1/jobs 라우터 — 작업 생성, 목록, 조회, 취소 엔드포인트.
 
 T077: POST /v1/jobs — URL 검증 → create_or_reuse → Celery 체인 디스패치 → 201/200 응답
 T078: GET /v1/jobs/{job_id} — 작업 조회 → 200 응답
 T103: DELETE /v1/jobs/{job_id} — 진행 중 작업 취소 + 부분 산출물 디렉터리 삭제
        (spec Clarifications Q3 / FR-028)
+T115: GET /v1/jobs — 최근 작업 목록 (cursor 페이지네이션, status 필터, US3)
 
 module-level 훅:
 - fetch_video_duration: 테스트에서 monkeypatch로 교체 가능한 영상 길이 조회 함수
@@ -15,7 +16,7 @@ from __future__ import annotations
 import logging
 import shutil
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +27,7 @@ from app.core.config import get_settings
 from app.core.exceptions import IllegalStateTransitionError, InvalidInputError
 from app.domain.events.publisher import JobEventPublisher
 from app.domain.jobs.service import JobsService
-from app.domain.jobs.states import TERMINAL_STATUSES
+from app.domain.jobs.states import TERMINAL_STATUSES, JobStatus
 from app.infrastructure.storage.filesystem import JobStorage
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,42 @@ async def create_job(
 
     body = success_envelope(job.model_dump(mode="json"), request_id)
     return JSONResponse(content=body, status_code=status_code)
+
+
+@router.get("/jobs")
+async def list_jobs(
+    request: Request,
+    limit: int = Query(20, ge=1, le=50, description="페이지 당 최대 항목 수"),
+    cursor: str | None = Query(None, description="다음 페이지 cursor (created_at 기반)"),
+    status: list[JobStatus] | None = Query(  # noqa: B008
+        None, description="상태 필터 (반복 지정 가능)"
+    ),
+    service: JobsService = Depends(jobs_service),  # noqa: B008
+) -> dict[str, object]:
+    """GET /v1/jobs — 최근 작업 목록 (US3, FR-029, FR-030).
+
+    cursor 기반 페이지네이션 — created_at DESC 정렬, 다음 페이지가 있으면
+    ``data.next_cursor`` 가 포함된다. 빈 결과의 경우 ``items=[], next_cursor=null``.
+
+    Args:
+        limit: 페이지 당 최대 항목 수 (1~50, 기본 20).
+        cursor: 이전 응답의 ``next_cursor`` 값 (없으면 첫 페이지).
+        status: 상태 필터 — 반복 지정으로 여러 상태를 허용한다.
+
+    Returns:
+        표준 success envelope (data = {items, next_cursor}).
+    """
+    items, next_cursor = await service.list_recent(
+        limit=limit,
+        cursor=cursor,
+        status_filter=list(status) if status else None,
+    )
+    request_id: str = getattr(request.state, "request_id", "")
+    data: dict[str, object] = {
+        "items": [j.model_dump(mode="json") for j in items],
+        "next_cursor": next_cursor,
+    }
+    return success_envelope(data, request_id)
 
 
 @router.get("/jobs/{job_id}")

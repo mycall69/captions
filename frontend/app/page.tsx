@@ -1,8 +1,23 @@
+/**
+ * S1 — 메인 페이지 (URL 입력 + 최근 작업).
+ *
+ * T119 (US3) — 기존 URL 입력 카드 아래에 최근 작업 목록을 통합한다.
+ * 와이어프레임 §S1 참조 (wireframes.md).
+ *
+ * - 최대 5건 노출 (`useRecentJobs({ limit: 5 })`)
+ * - 빈 결과 → `EmptyState`
+ * - "전체 보기" 링크는 MVP 범위 밖 (placeholder anchor)
+ *
+ * 헌법 V — 모든 사용자 노출 텍스트는 한국어.
+ */
 'use client';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { apiFetch, ApiError } from '@/lib/api/client';
 import { UrlInputCard } from '@/components/url-input/UrlInputCard';
+import { JobListItem } from '@/components/job-list/JobListItem';
+import { EmptyState } from '@/components/job-list/EmptyState';
+import { useRecentJobs } from '@/lib/api/hooks';
 import type { components } from '@/lib/api/types.gen';
 
 type Job = components['schemas']['Job'];
@@ -11,6 +26,7 @@ export default function HomePage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const recent = useRecentJobs({ limit: 5 });
 
   async function handleSubmit(url: string) {
     setError(null);
@@ -32,6 +48,9 @@ export default function HomePage() {
     }
   }
 
+  const items = recent.data?.items ?? [];
+  const isEmpty = !recent.isLoading && items.length === 0;
+
   return (
     <div className="space-y-8">
       <div className="text-center">
@@ -45,6 +64,42 @@ export default function HomePage() {
           {error}
         </p>
       )}
+
+      <section aria-labelledby="recent-jobs-heading" className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 id="recent-jobs-heading" className="text-lg font-semibold">
+            최근 작업
+          </h2>
+          <button
+            type="button"
+            className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+            onClick={() => recent.refetch()}
+            disabled={recent.isFetching}
+          >
+            {recent.isFetching ? '새로고침 중…' : '새로고침 ↻'}
+          </button>
+        </div>
+
+        {recent.isLoading && (
+          <p className="text-sm text-muted-foreground">최근 작업을 불러오는 중…</p>
+        )}
+
+        {recent.isError && !recent.isLoading && (
+          <p role="alert" className="text-sm text-destructive">
+            최근 작업을 불러오지 못했습니다.
+          </p>
+        )}
+
+        {isEmpty && !recent.isError && <EmptyState />}
+
+        {items.length > 0 && (
+          <ul className="space-y-2">
+            {items.map((job) => (
+              <JobListItem key={job.id} job={job} />
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

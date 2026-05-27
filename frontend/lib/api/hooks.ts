@@ -1,10 +1,11 @@
 /**
- * lib/api/hooks.ts — TanStack Query 훅 + SSE → cache merge (T110, US2)
+ * lib/api/hooks.ts — TanStack Query 훅 + SSE → cache merge (T110, T118, US2/US3)
  *
  * 책임:
  *   1. `useJob(jobId)` — `GET /v1/jobs/{id}` 를 TanStack Query 로 캐싱.
  *   2. `useJobWithEvents(jobId)` — SSE 이벤트를 partial setQueryData 로 머지하여
  *      `useJob` 캐시를 페이지 리로드 없이 갱신.
+ *   3. `useRecentJobs(...)` — `GET /v1/jobs` 최근 작업 목록 (US3).
  *
  * 헌법 V — 한국어 주석.
  */
@@ -17,6 +18,13 @@ import { useJobEvents, type RawEventPayload } from '@/lib/sse';
 import type { JobEvent as UiJobEvent } from '@/components/stage-progress/StageLog';
 
 export type Job = components['schemas']['Job'];
+export type JobStatus = components['schemas']['JobStatus'];
+
+/** GET /v1/jobs 응답 data 형태 (openapi.yaml §JobListEnvelope.data). */
+export interface JobListData {
+  items: Job[];
+  next_cursor: string | null;
+}
 
 export function jobQueryKey(jobId: string): ['job', string] {
   return ['job', jobId];
@@ -130,4 +138,45 @@ export function useJobWithEvents(jobId: string | null | undefined) {
     error: query.error,
     refetch: query.refetch,
   };
+}
+
+/**
+ * useRecentJobs — `GET /v1/jobs` 최근 작업 목록 (T118, US3).
+ *
+ * 와이어프레임 §S1 — 메인 페이지 하단 "최근 작업" 카드에서 사용.
+ *
+ * 정책:
+ *   - staleTime 10s — 잦은 재요청을 막되 탭 복귀 시 새로고침되도록 한다.
+ *   - 진행 중 항목의 실시간 갱신은 페이지의 useJobWithEvents 가 담당한다
+ *     (목록 자체는 SSE 구독을 열지 않고 stale 시간 + 사용자 액션으로 갱신).
+ *   - status 필터는 반복 쿼리 파라미터로 전달한다 (openapi.yaml style=form, explode=true).
+ *
+ * @param options.limit 페이지 당 최대 항목 수 (1~50, 기본 5 — S1 카드 5건 기준).
+ * @param options.status 상태 필터 — 단일 또는 복수.
+ */
+export function useRecentJobs(options?: {
+  limit?: number;
+  status?: JobStatus | JobStatus[];
+}) {
+  const limit = options?.limit ?? 5;
+  const statuses: JobStatus[] | undefined = options?.status
+    ? Array.isArray(options.status)
+      ? options.status
+      : [options.status]
+    : undefined;
+
+  return useQuery({
+    queryKey: ['jobs', 'recent', limit, statuses ?? null] as const,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set('limit', String(limit));
+      if (statuses) {
+        for (const s of statuses) params.append('status', s);
+      }
+      return apiFetch<JobListData>(`/jobs?${params.toString()}`);
+    },
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
 }

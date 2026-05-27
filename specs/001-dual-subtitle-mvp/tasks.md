@@ -242,17 +242,17 @@ plan.md §Project Structure 기준.
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T112 [P] [US3] Contract test `GET /v1/jobs` (페이지네이션·status 필터·next_cursor) in `backend/tests/integration/test_jobs_list.py`
-- [ ] T113 [P] [US3] Frontend component test: `JobListItem` (completed/in-progress/failed variant) in `frontend/tests/component/JobListItem.test.tsx`
-- [ ] T114 [P] [US3] Playwright e2e: US3 recent jobs revisit — 완료 항목 클릭 → S3 진입 in `frontend/tests/e2e/us3-recent.spec.ts`
+- [x] T112 [P] [US3] Contract test `GET /v1/jobs` (페이지네이션·status 필터·next_cursor) in `backend/tests/integration/test_jobs_list.py`
+- [x] T113 [P] [US3] Frontend component test: `JobListItem` (completed/in-progress/failed variant) in `frontend/tests/component/JobListItem.test.tsx`
+- [x] T114 [P] [US3] Playwright e2e: US3 recent jobs revisit — 완료 항목 클릭 → S3 진입 in `frontend/tests/e2e/us3-recent.spec.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T115 [US3] Implement `GET /v1/jobs` cursor-based list endpoint in `backend/app/api/v1/routes/jobs.py` (T077·T078 확장 — `ix_video_job_status_created_at` 인덱스 사용)
-- [ ] T116 [P] [US3] Implement `JobListItem` component (썸네일·메타·상태별 우측 액션) in `frontend/components/job-list/JobListItem.tsx`
-- [ ] T117 [P] [US3] Implement `EmptyState` component (빈 상태 C3) in `frontend/components/job-list/EmptyState.tsx`
-- [ ] T118 [P] [US3] Implement `useRecentJobs` hook (TanStack Query, 10초 stale, 진행 중 항목만 SSE-driven 부분 갱신) in `frontend/lib/api/hooks.ts`
-- [ ] T119 [US3] Integrate recent jobs list into `S1` (T090 확장) — 5건 + "전체 보기" + EmptyState 분기
+- [x] T115 [US3] Implement `GET /v1/jobs` cursor-based list endpoint in `backend/app/api/v1/routes/jobs.py` (T077·T078 확장 — `ix_video_job_status_created_at` 인덱스 사용)
+- [x] T116 [P] [US3] Implement `JobListItem` component (썸네일·메타·상태별 우측 액션) in `frontend/components/job-list/JobListItem.tsx`
+- [x] T117 [P] [US3] Implement `EmptyState` component (빈 상태 C3) in `frontend/components/job-list/EmptyState.tsx`
+- [x] T118 [P] [US3] Implement `useRecentJobs` hook (TanStack Query, 10초 stale, 진행 중 항목만 SSE-driven 부분 갱신) in `frontend/lib/api/hooks.ts`
+- [x] T119 [US3] Integrate recent jobs list into `S1` (T090 확장) — 5건 + "전체 보기" + EmptyState 분기
 
 **Checkpoint**: 세 가지 user story 모두 독립적으로 동작.
 
