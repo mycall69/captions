@@ -7,6 +7,7 @@ FastAPI SSE 핸들러가 subscribe()를 소비하고, Celery task가 publish()�
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -47,6 +48,17 @@ class EventBus:
             decode_responses=True,
         )
 
+    @classmethod
+    def from_client(cls, client: aioredis.Redis) -> EventBus:  # type: ignore[type-arg]
+        """이미 생성된 Redis 클라이언트를 주입해 EventBus 를 만든다.
+
+        테스트(fakeredis) 또는 공유 connection pool 시나리오 전용 진입점.
+        ``__init__`` 의 URL 기반 초기화를 우회한다.
+        """
+        bus = cls.__new__(cls)
+        bus._redis = client
+        return bus
+
     async def publish(self, channel: str, payload: dict[str, Any]) -> None:
         """채널에 JSON 인코딩된 payload를 발행한다.
 
@@ -56,19 +68,27 @@ class EventBus:
         """
         await self._redis.publish(channel, json.dumps(payload, ensure_ascii=False))
 
-    async def subscribe(self, channel: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def subscribe(
+        self,
+        channel: str,
+        *,
+        ready: asyncio.Event | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """채널을 구독하고 수신된 JSON dict를 순차로 yield한다.
 
         구독 해제는 호출자가 제너레이터를 종료(aclose 또는 break)함으로써 수행된다.
 
         Args:
             channel: 구독 대상 채널 이름 (예: ``job:01HX2T...``).
+            ready: subscribe 완료 후 set 되는 신호용 Event (테스트 race 제거 전용).
 
         Yields:
             수신 메시지를 JSON 디코딩한 dict.
         """
         pubsub = self._redis.pubsub()
         await pubsub.subscribe(channel)
+        if ready is not None:
+            ready.set()
         try:
             async for raw in pubsub.listen():
                 # 타입 'subscribe' 확인 메시지는 건너뜀

@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -80,18 +79,20 @@ async def _fake_fetch_metadata(video_id: str) -> VideoMetadata:
 
 @pytest_asyncio.fixture
 async def cancel_client(
-    db_session: AsyncSession, tmp_path: Path
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[AsyncClient]:
     """storage_root 가 tmp_path 인 통합 테스트 client.
 
     DELETE 후 디렉터리 삭제 검증을 위해 STORAGE_ROOT 환경변수를 tmp_path 로
-    덮어쓰고 settings 캐시를 무효화한다.
+    덮어쓰고 settings 캐시를 무효화한다. (monkeypatch 가 자동으로 원복)
     """
     # storage_root override — settings.storage_root 가 tmp_path 를 가리키게 함
     storage_root = tmp_path / "storage"
     storage_root.mkdir(parents=True, exist_ok=True)
-    os.environ["STORAGE_ROOT"] = str(storage_root)
-    os.environ["DISABLE_CHAIN_DISPATCH"] = "true"
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    monkeypatch.setenv("DISABLE_CHAIN_DISPATCH", "true")
     get_settings.cache_clear()
 
     async def _override_db() -> AsyncIterator[AsyncSession]:
@@ -113,8 +114,6 @@ async def cancel_client(
             yield c
     finally:
         fastapi_app.dependency_overrides.clear()
-        os.environ.pop("STORAGE_ROOT", None)
-        os.environ.pop("DISABLE_CHAIN_DISPATCH", None)
         get_settings.cache_clear()
 
 

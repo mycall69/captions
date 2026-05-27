@@ -16,7 +16,7 @@
  *   4. 실패(error) 단계에 error 클래스가 부여된다.
  *
  * - 컴포넌트가 아직 구현되지 않은 경우 (T105 이전) 테스트 전체를 skip 처리
- * - Vite 정적 import 분석을 우회하기 위해 경로를 런타임에 조립한다
+ * - Vitest 의 동적 import 실패는 `.catch` 로 안전하게 흡수한다
  */
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
@@ -39,16 +39,14 @@ type StageProgressBarType = React.ComponentType<{
   errorStage?: string | null;
 }>;
 
-let StageProgressBar: StageProgressBarType | undefined;
-
-const _segments = ['@', '/', 'components', '/stage-progress/', 'StageProgressBar'];
-const _modulePath = _segments.join('');
+// Vite 정적 분석을 피하기 위해 경로를 변수로 분리한다.
+// 컴포넌트(T105) 미구현 상태에서도 import 실패가 `.catch` 로 안전하게 흡수돼야 한다.
+const _modulePath: string = '@/components/stage-progress/StageProgressBar';
 const _mod = await import(/* @vite-ignore */ _modulePath).catch(() => null);
-if (_mod && typeof _mod === 'object' && 'StageProgressBar' in _mod) {
-  StageProgressBar = (_mod as Record<string, unknown>)[
-    'StageProgressBar'
-  ] as StageProgressBarType;
-}
+const StageProgressBar: StageProgressBarType | undefined =
+  _mod && typeof _mod === 'object' && 'StageProgressBar' in _mod
+    ? ((_mod as Record<string, unknown>)['StageProgressBar'] as StageProgressBarType)
+    : undefined;
 
 const componentMissing = !StageProgressBar;
 

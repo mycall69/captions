@@ -10,7 +10,7 @@
  *   2. 각 status 가 서로 다른 시각 variant 를 가진다 (data-status 또는 class).
  *
  * - 컴포넌트가 아직 구현되지 않은 경우 (T104 이전) 테스트 전체를 skip 처리
- * - Vite 정적 import 분석을 우회하기 위해 경로를 런타임에 조립한다
+ * - Vitest 의 동적 import 실패는 `.catch` 로 안전하게 흡수한다
  */
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
@@ -29,14 +29,14 @@ type StatusBadgeType = React.ComponentType<{
   status: JobStatus;
 }>;
 
-let StatusBadge: StatusBadgeType | undefined;
-
-const _segments = ['@', '/', 'components', '/job-list/', 'StatusBadge'];
-const _modulePath = _segments.join('');
+// Vite 정적 분석을 피하기 위해 경로를 변수로 분리한다.
+// 컴포넌트(T104) 미구현 상태에서도 import 실패가 `.catch` 로 안전하게 흡수돼야 한다.
+const _modulePath: string = '@/components/job-list/StatusBadge';
 const _mod = await import(/* @vite-ignore */ _modulePath).catch(() => null);
-if (_mod && typeof _mod === 'object' && 'StatusBadge' in _mod) {
-  StatusBadge = (_mod as Record<string, unknown>)['StatusBadge'] as StatusBadgeType;
-}
+const StatusBadge: StatusBadgeType | undefined =
+  _mod && typeof _mod === 'object' && 'StatusBadge' in _mod
+    ? ((_mod as Record<string, unknown>)['StatusBadge'] as StatusBadgeType)
+    : undefined;
 
 const componentMissing = !StatusBadge;
 
@@ -51,14 +51,14 @@ const ALL_STATUSES: ReadonlyArray<JobStatus> = [
 ];
 
 // 각 status 별로 사용자에게 노출될 한국어 라벨의 일부(또는 동의어) 후보.
-// 정확한 문구는 구현체가 결정하지만, 한국어 텍스트가 존재해야 한다.
+// 헌법 V — 사용자 노출 텍스트는 한국어. 영어 fallback 금지.
 const KOREAN_HINT: Record<JobStatus, RegExp> = {
   pending: /대기|준비|접수/,
   downloading: /다운|받는|다운로드/,
   subtitle_processing: /자막|처리|추출/,
   translating: /번역/,
   rendering: /렌더|병합|생성/,
-  completed: /완료|성공|done/i,
+  completed: /완료|성공/,
   failed: /실패|오류|에러/,
 };
 

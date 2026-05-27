@@ -200,14 +200,19 @@ class TestSseDataPayload:
     async def test_progress_payload_has_progress_field(
         self, client: AsyncClient, in_progress_job_id: str
     ) -> None:
-        """`job.progress` payload 는 0~1 범위의 progress 를 포함한다."""
+        """`job.progress` payload 는 0~1 범위의 progress 를 포함한다.
+
+        진행률 이벤트는 in-progress 작업에서 최소 1건 발행되어야 한다 (FR-024).
+        fixture 가 이를 보장하지 못하면 회귀이므로 skip 대신 실패시킨다.
+        """
         raw = await _read_stream(client, f"/v1/jobs/{in_progress_job_id}/events")
         progress_frames = [
             f for f in _parse_sse_frames(raw)
             if "_comment" not in f and f.get("event") == "job.progress"
         ]
-        if not progress_frames:
-            pytest.skip("진행률 이벤트가 발행되지 않은 시나리오")
+        assert progress_frames, (
+            "fixture 가 최소 1건의 job.progress 이벤트를 만들어야 합니다 (FR-024)."
+        )
         for frame in progress_frames:
             payload = json.loads(frame["data"])
             assert "progress" in payload
@@ -278,11 +283,13 @@ class TestSseLastEventIdReplay:
         # live (Redis pub/sub) 이벤트가 끼어드는 것을 막기 위해 한 번에 작게 읽고
         # 즉시 스트림을 끊는다. 그래도 keepalive 코멘트가 섞일 수 있으므로
         # `_comment` 프레임은 제외한다.
+        # max_bytes 를 200_000 으로 잡아 60건 replay 가 모두 들어와도
+        # 잘리지 않게 한다. 잘리면 캡 위반(51+ 건)을 감지할 수 없다.
         raw = await _read_stream(
             client,
             f"/v1/jobs/{in_progress_job_id}/events",
             headers={"Last-Event-ID": "0"},
-            max_bytes=64_000,
+            max_bytes=200_000,
         )
         all_frames = [f for f in _parse_sse_frames(raw) if "_comment" not in f]
 
@@ -294,18 +301,21 @@ class TestSseLastEventIdReplay:
             if fid.isdigit():
                 replay_frames.append(f)
 
-        assert len(replay_frames) <= 50, (
-            f"replay 한도(50) 초과: 시드 60건 중 {len(replay_frames)} 건이 replay 됨"
+        # 하한 1: 실제로 replay 가 일어났음을 확인 (0건이면 검증 무의미).
+        # 상한 50: events.md 명시 한도.
+        assert 1 <= len(replay_frames) <= 50, (
+            f"replay 한도(50) 위반 또는 0건: 시드 60건 중 {len(replay_frames)} 건 replay"
         )
-        # 60건 시드 → 캡이 동작했다면 정확히 50건, 동작하지 않으면 51+ 건.
-        # 51건 이상이 와도 위 assertion 이 실패한다.
 
 
 class TestSseKeepalive:
     """30초 이상 idle 시 keepalive 코멘트 push 검증 (events.md §공통 규칙)."""
 
     async def test_keepalive_comment_is_sent_when_idle(
-        self, client: AsyncClient, in_progress_job_id: str
+        self,
+        client: AsyncClient,
+        in_progress_job_id: str,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """idle 상태에서 `: keepalive` 형태의 코멘트 프레임이 푸시되어야 한다.
 
@@ -321,14 +331,10 @@ class TestSseKeepalive:
         if not hasattr(_events_mod, "KEEPALIVE_INTERVAL_SEC"):
             pytest.skip("KEEPALIVE_INTERVAL_SEC 훅 미정의 — T101 에서 노출 예정")
 
-        original = _events_mod.KEEPALIVE_INTERVAL_SEC
-        _events_mod.KEEPALIVE_INTERVAL_SEC = 0.05
-        try:
-            raw = await _read_stream(
-                client, f"/v1/jobs/{in_progress_job_id}/events", max_bytes=4_096
-            )
-        finally:
-            _events_mod.KEEPALIVE_INTERVAL_SEC = original
+        monkeypatch.setattr(_events_mod, "KEEPALIVE_INTERVAL_SEC", 0.05)
+        raw = await _read_stream(
+            client, f"/v1/jobs/{in_progress_job_id}/events", max_bytes=4_096
+        )
 
         # `:` 로 시작하는 코멘트 프레임이 한 건 이상 존재해야 한다.
         assert re.search(r"(?m)^:\s*keepalive", raw) is not None, (

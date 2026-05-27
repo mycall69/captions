@@ -20,6 +20,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,11 +33,9 @@ pytest.importorskip(
     reason="awaiting T099 implementation — app.domain.events.publisher",
 )
 
-from app.domain.events.publisher import (
-    JobEventPublisher,  # noqa: E402  # type: ignore[reportMissingImports]
-)
+from app.domain.events.publisher import JobEventPublisher  # noqa: E402
 from sqlalchemy import select  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker  # noqa: E402
 
 from app.core.ids import new_ulid  # noqa: E402
 from app.domain.events.bus import EventBus, job_channel  # noqa: E402
@@ -77,30 +77,43 @@ async def seeded_job(db_session: AsyncSession) -> str:
 @pytest.fixture
 def fake_event_bus(fake_redis: Any) -> EventBus:
     """fakeredis 를 주입한 EventBus 인스턴스 — 실제 publish/subscribe 가능."""
-    bus = EventBus.__new__(EventBus)
-    bus._redis = fake_redis
-    return bus
+    return EventBus.from_client(fake_redis)
 
 
 # ── 보조 헬퍼 ────────────────────────────────────────────────────────────────
 
 
-async def _collect_one_publish(bus: EventBus, channel: str, timeout: float = 1.0) -> dict[str, Any]:
-    """채널을 1회 구독해 첫 payload 1건을 수신해 반환한다 (타임아웃 시 빈 dict)."""
+async def _publish_and_collect(
+    bus: EventBus,
+    channel: str,
+    *,
+    publisher: Callable[[], Awaitable[None]],
+    n_expected: int,
+    timeout: float = 1.0,
+) -> list[dict[str, Any]]:
+    """채널 구독 → publisher 실행 → 메시지 n_expected 개 수집 후 반환한다.
+
+    asyncio.Event 로 subscribe 완료 시점을 확정해 race 를 제거한다.
+    """
+    ready = asyncio.Event()
     received: list[dict[str, Any]] = []
 
     async def _sub() -> None:
-        async for msg in bus.subscribe(channel):
-            received.append(msg)
-            break
+        async for payload in bus.subscribe(channel, ready=ready):
+            received.append(payload)
+            if len(received) >= n_expected:
+                return
 
     task = asyncio.create_task(_sub())
-    await asyncio.sleep(0.05)  # 구독 준비 대기
+    await ready.wait()
+    await publisher()
     try:
         await asyncio.wait_for(task, timeout=timeout)
     except TimeoutError:
         task.cancel()
-    return received[0] if received else {}
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    return received
 
 
 # ── 1. 정상 경로: DB row + Redis publish 동시 성립 ──────────────────────────
@@ -140,30 +153,22 @@ class TestPublishHappyPath:
     ) -> None:
         """publish 호출 시 Redis 채널에 메시지가 전달된다."""
         publisher = JobEventPublisher(session=db_session, bus=fake_event_bus)
-        channel = job_channel(seeded_job)
 
-        # 구독 task 를 먼저 띄우고 publish 호출
-        received: list[dict[str, Any]] = []
+        async def _do_publish() -> None:
+            await publisher.publish_state_changed(
+                job_id=seeded_job,
+                previous_status=JobStatus.pending,
+                new_status=JobStatus.downloading,
+            )
+            await db_session.commit()
 
-        async def _sub() -> None:
-            async for msg in fake_event_bus.subscribe(channel):
-                received.append(msg)
-                break
-
-        task = asyncio.create_task(_sub())
-        await asyncio.sleep(0.05)
-
-        await publisher.publish_state_changed(
-            job_id=seeded_job,
-            previous_status=JobStatus.pending,
-            new_status=JobStatus.downloading,
+        received = await _publish_and_collect(
+            fake_event_bus,
+            job_channel(seeded_job),
+            publisher=_do_publish,
+            n_expected=1,
+            timeout=2.0,
         )
-        await db_session.commit()
-
-        try:
-            await asyncio.wait_for(task, timeout=2.0)
-        except TimeoutError:
-            task.cancel()
 
         assert len(received) == 1
         assert received[0].get("job_id") == seeded_job
@@ -177,17 +182,28 @@ class TestPublishAtomicity:
 
     async def test_redis_failure_rolls_back_db_row(
         self,
+        db_engine: AsyncEngine,
         db_session: AsyncSession,
         seeded_job: str,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """publish 가 예외를 던지면 동일 트랜잭션의 INSERT 가 롤백되어야 한다."""
+        """publish 가 예외를 던지면 동일 트랜잭션의 INSERT 가 롤백되어야 한다.
+
+        검증 전략:
+        - publisher 호출 → 동일 엔진의 **별도 세션**에서 SELECT 한다.
+          이렇게 하면 원본 세션의 in-flight INSERT 가 보이지 않으므로
+          publisher 가 실제로 rollback 하지 않았다면 테스트가 실패한다.
+        """
 
         class _ExplodingBus:
             async def publish(self, channel: str, payload: dict[str, Any]) -> None:  # noqa: ARG002
                 raise RuntimeError("redis down")
 
-            async def subscribe(self, channel: str) -> Any:  # noqa: ARG002, ANN401
+            async def subscribe(  # noqa: ARG002
+                self,
+                channel: str,
+                *,
+                ready: asyncio.Event | None = None,
+            ) -> Any:
                 raise NotImplementedError
 
             async def close(self) -> None:  # pragma: no cover - 미사용 경로
@@ -195,22 +211,22 @@ class TestPublishAtomicity:
 
         publisher = JobEventPublisher(session=db_session, bus=_ExplodingBus())
 
-        with pytest.raises(Exception):  # noqa: B017, BLE001
+        with pytest.raises(RuntimeError, match="redis down"):
             await publisher.publish_state_changed(
                 job_id=seeded_job,
                 previous_status=JobStatus.pending,
                 new_status=JobStatus.downloading,
             )
 
-        # 테스트가 임의로 rollback 하면 publisher 의 원자성 보장이 가려진다.
-        # 동일 세션의 in-flight 객체 캐시를 비우고, 커밋된 상태만 다시 조회한다.
-        # publisher 가 실패 시 자체 롤백을 수행했다면 row 가 남아 있지 않아야 한다.
-        db_session.expire_all()
-        rows = (
-            await db_session.execute(
-                select(JobEvent).where(JobEvent.job_id == seeded_job)
-            )
-        ).scalars().all()
+        # 동일 엔진에 묶인 **별도 세션**으로 조회 → in-flight pending INSERT 는 보이지 않는다.
+        # publisher 가 실패 시 자체 rollback 을 수행했어야만 row 가 비어 있다.
+        factory = async_sessionmaker(db_engine, expire_on_commit=False)
+        async with factory() as verify_session:
+            rows = (
+                await verify_session.execute(
+                    select(JobEvent).where(JobEvent.job_id == seeded_job)
+                )
+            ).scalars().all()
         assert rows == [], "publish 실패에도 불구하고 DB row 가 남아 있습니다."
 
 
@@ -228,29 +244,22 @@ class TestEventIdMonotonicity:
     ) -> None:
         """payload 의 event_id 는 26자 Crockford Base32 ULID 여야 한다."""
         publisher = JobEventPublisher(session=db_session, bus=fake_event_bus)
-        channel = job_channel(seeded_job)
 
-        received: list[dict[str, Any]] = []
+        async def _do_publish() -> None:
+            await publisher.publish_state_changed(
+                job_id=seeded_job,
+                previous_status=JobStatus.pending,
+                new_status=JobStatus.downloading,
+            )
+            await db_session.commit()
 
-        async def _sub() -> None:
-            async for msg in fake_event_bus.subscribe(channel):
-                received.append(msg)
-                break
-
-        task = asyncio.create_task(_sub())
-        await asyncio.sleep(0.05)
-
-        await publisher.publish_state_changed(
-            job_id=seeded_job,
-            previous_status=JobStatus.pending,
-            new_status=JobStatus.downloading,
+        received = await _publish_and_collect(
+            fake_event_bus,
+            job_channel(seeded_job),
+            publisher=_do_publish,
+            n_expected=1,
+            timeout=2.0,
         )
-        await db_session.commit()
-
-        try:
-            await asyncio.wait_for(task, timeout=2.0)
-        except TimeoutError:
-            task.cancel()
 
         assert received
         event_id = received[0].get("event_id")
@@ -267,40 +276,32 @@ class TestEventIdMonotonicity:
     ) -> None:
         """동일 job 의 연속 publish 는 event_id 가 단조 증가해야 한다."""
         publisher = JobEventPublisher(session=db_session, bus=fake_event_bus)
-        channel = job_channel(seeded_job)
 
-        received: list[dict[str, Any]] = []
+        async def _do_publish() -> None:
+            await publisher.publish_state_changed(
+                job_id=seeded_job,
+                previous_status=JobStatus.pending,
+                new_status=JobStatus.downloading,
+            )
+            await publisher.publish_progress(
+                job_id=seeded_job,
+                status=JobStatus.downloading,
+                progress=0.5,
+            )
+            await publisher.publish_state_changed(
+                job_id=seeded_job,
+                previous_status=JobStatus.downloading,
+                new_status=JobStatus.subtitle_processing,
+            )
+            await db_session.commit()
 
-        async def _sub() -> None:
-            async for msg in fake_event_bus.subscribe(channel):
-                received.append(msg)
-                if len(received) >= 3:
-                    break
-
-        task = asyncio.create_task(_sub())
-        await asyncio.sleep(0.05)
-
-        await publisher.publish_state_changed(
-            job_id=seeded_job,
-            previous_status=JobStatus.pending,
-            new_status=JobStatus.downloading,
+        received = await _publish_and_collect(
+            fake_event_bus,
+            job_channel(seeded_job),
+            publisher=_do_publish,
+            n_expected=3,
+            timeout=2.0,
         )
-        await publisher.publish_progress(
-            job_id=seeded_job,
-            status=JobStatus.downloading,
-            progress=0.5,
-        )
-        await publisher.publish_state_changed(
-            job_id=seeded_job,
-            previous_status=JobStatus.downloading,
-            new_status=JobStatus.subtitle_processing,
-        )
-        await db_session.commit()
-
-        try:
-            await asyncio.wait_for(task, timeout=2.0)
-        except TimeoutError:
-            task.cancel()
 
         # 3건 모두 수신해야 단조성 검증이 의미를 가진다. (0~1건이면 trivial pass)
         assert len(received) == 3, (
@@ -324,46 +325,37 @@ class TestSeqMonotonicity:
     ) -> None:
         """동일 job 에 대해 발행한 이벤트는 seq 가 단조 증가해야 한다."""
         publisher = JobEventPublisher(session=db_session, bus=fake_event_bus)
-        channel = job_channel(seeded_job)
 
-        received: list[dict[str, Any]] = []
+        async def _do_publish() -> None:
+            await publisher.publish_state_changed(
+                job_id=seeded_job,
+                previous_status=JobStatus.pending,
+                new_status=JobStatus.downloading,
+            )
+            await publisher.publish_progress(
+                job_id=seeded_job,
+                status=JobStatus.downloading,
+                progress=0.25,
+            )
+            await publisher.publish_progress(
+                job_id=seeded_job,
+                status=JobStatus.downloading,
+                progress=0.75,
+            )
+            await db_session.commit()
 
-        async def _sub() -> None:
-            async for msg in fake_event_bus.subscribe(channel):
-                received.append(msg)
-                if len(received) >= 3:
-                    break
-
-        task = asyncio.create_task(_sub())
-        await asyncio.sleep(0.05)
-
-        await publisher.publish_state_changed(
-            job_id=seeded_job,
-            previous_status=JobStatus.pending,
-            new_status=JobStatus.downloading,
+        received = await _publish_and_collect(
+            fake_event_bus,
+            job_channel(seeded_job),
+            publisher=_do_publish,
+            n_expected=3,
+            timeout=2.0,
         )
-        await publisher.publish_progress(
-            job_id=seeded_job,
-            status=JobStatus.downloading,
-            progress=0.25,
-        )
-        await publisher.publish_progress(
-            job_id=seeded_job,
-            status=JobStatus.downloading,
-            progress=0.75,
-        )
-        await db_session.commit()
-
-        try:
-            await asyncio.wait_for(task, timeout=2.0)
-        except TimeoutError:
-            task.cancel()
 
         # 3건 모두 수신해야 단조성 검증이 의미를 가진다. (0~1건이면 trivial pass)
         assert len(received) == 3, (
             f"3건 publish 후 수신된 이벤트가 {len(received)}건 — 단조성 검증 불가"
         )
         seqs = [int(m["seq"]) for m in received]
-        assert seqs == sorted(seqs)
-        # seq 사이 간격이 1 이라는 사양은 events.md 에 명시되지 않았으나, 단조성은 필수.
-        assert len(set(seqs)) == len(seqs), f"seq 중복: {seqs}"
+        # 엄격한 단조 증가 — sorted + unique 동시 검증.
+        assert seqs == sorted(set(seqs)), f"seq 가 엄격 단조 증가하지 않음: {seqs}"

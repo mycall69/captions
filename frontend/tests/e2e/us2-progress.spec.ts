@@ -6,7 +6,7 @@
  *   - 실패 이벤트(`job.failed`) 수신 시 FailurePanel 이 사유와 함께 노출된다.
  *
  * 본 테스트는 `app/jobs/[id]/page.tsx` 가 SSE 구독을 통합한 뒤(T101+) 활성화된다.
- * 현재(RED phase) 는 `test.skip` 으로 표시하여 CI 그린 상태를 유지한다.
+ * 현재(RED phase) 는 `test.fixme` 로 "구현 대기" 의도를 명시한다.
  *
  * 와이어프레임 §S2 — StageProgressBar(6노드) + StatusBadge + FailurePanel.
  */
@@ -15,7 +15,7 @@ import { test, expect } from '@playwright/test';
 const SSE_PATH_PATTERN = /\/v1\/jobs\/.+\/events$/;
 
 test.describe('US2: 작업 진행 상황 실시간 가시화 (P2 acceptance)', () => {
-  test.skip(
+  test.fixme(
     'SSE 단계 전이 이벤트가 StageProgressBar 를 페이지 새로고침 없이 갱신한다',
     async ({ page }) => {
       // 1) GET /v1/jobs/<id> 응답 mock — in-progress 상태로 진입하게 한다
@@ -93,7 +93,7 @@ test.describe('US2: 작업 진행 상황 실시간 가시화 (P2 acceptance)', (
     },
   );
 
-  test.skip(
+  test.fixme(
     'SSE job.failed 이벤트가 FailurePanel 에 사유와 함께 노출된다',
     async ({ page }) => {
       // 1) GET /v1/jobs/<id> — failed 상태로 응답 mock
