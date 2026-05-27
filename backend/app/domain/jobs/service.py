@@ -131,6 +131,20 @@ class JobsService:
         )
         return updated
 
+    async def update_languages(
+        self,
+        job_id: str,
+        source: str,
+        target: str,
+    ) -> VideoJob:
+        """source_language / target_language 를 갱신한다.
+
+        자막 추출 완료 후 언어 정보가 확정되면 호출된다.
+        작업이 존재하지 않으면 NotFoundError를 발생시킨다.
+        """
+        await self.get(job_id)  # 존재 여부 검증
+        return await self._repo.update_languages(job_id, source, target)
+
     async def mark_failed(
         self,
         job_id: str,

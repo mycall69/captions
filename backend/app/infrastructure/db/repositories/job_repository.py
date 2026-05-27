@@ -281,6 +281,34 @@ class SqlJobRepository:
         orm = fetch.scalar_one()
         return _to_domain(orm)
 
+    async def update_languages(
+        self,
+        job_id: str,
+        source_language: str,
+        target_language: str,
+    ) -> VideoJob:
+        """source_language / target_language 열을 갱신하고 갱신된 도메인 모델을 반환한다.
+
+        자막 추출 완료 후 언어 정보가 확정되는 시점에 호출된다.
+        """
+        stmt = (
+            update(OrmVideoJob)
+            .where(OrmVideoJob.id == job_id)
+            .values(
+                source_language=source_language,
+                target_language=target_language,
+                updated_at=datetime.now(tz=UTC),
+            )
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+        fetch = await self._session.execute(
+            select(OrmVideoJob).where(OrmVideoJob.id == job_id)
+        )
+        orm = fetch.scalar_one()
+        return _to_domain(orm)
+
     async def update_progress(self, job_id: str, progress: float) -> None:
         """진행률 갱신 — DB 컬럼 없음(video_job에 progress 컬럼 미존재).
 

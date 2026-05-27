@@ -76,3 +76,15 @@ class JobRepository(Protocol):
         빈번하게 호출되므로 반환값 없이 fire-and-forget으로 사용할 수 있다.
         """
         ...
+
+    async def update_languages(
+        self,
+        job_id: str,
+        source_language: str,
+        target_language: str,
+    ) -> VideoJob:
+        """source_language / target_language 를 갱신하고 갱신된 도메인 모델을 반환한다.
+
+        자막 추출 완료 후 언어 정보가 확정되는 시점에 호출된다.
+        """
+        ...

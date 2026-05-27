@@ -24,8 +24,14 @@ def make_celery() -> Celery:
         "captions",
         broker=settings.celery_broker_url,
         backend=settings.celery_result_backend,
-        # Phase 3g에서 tasks 모듈 추가 후 include 목록 채움
-        include=[],
+        # Phase 3g: 태스크 모듈 등록
+        include=[
+            "app.workers.tasks.download",
+            "app.workers.tasks.extract_subtitles",
+            "app.workers.tasks.translate",
+            "app.workers.tasks.render",
+            "app.workers.error_handler",
+        ],
     )
 
     app.conf.update(
