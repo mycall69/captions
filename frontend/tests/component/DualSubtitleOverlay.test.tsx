@@ -17,7 +17,7 @@
  *   - 영상 하단 18% 영역에 두 줄 표시 (원문 / 번역문)
  *   - order prop으로 원문 위 / 번역문 위 전환 (FR-023, 단축키 R)
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 
@@ -39,21 +39,15 @@ type DualSubtitleOverlayType = React.ComponentType<{
 
 let DualSubtitleOverlay: DualSubtitleOverlayType | undefined;
 
-beforeAll(async () => {
-  try {
-    // Vite의 정적 import 분석을 우회하기 위해 경로를 런타임에 조립
-    const segments = ['@', '/', 'components', '/subtitle/', 'DualSubtitleOverlay'];
-    const modulePath = segments.join('');
-    const mod = await import(/* @vite-ignore */ modulePath).catch(() => null);
-    if (mod && typeof mod === 'object' && 'DualSubtitleOverlay' in mod) {
-      DualSubtitleOverlay = (mod as Record<string, unknown>)[
-        'DualSubtitleOverlay'
-      ] as DualSubtitleOverlayType;
-    }
-  } catch {
-    // 미구현 상태 — skip 처리
-  }
-});
+// Vite의 정적 import 분석을 우회하기 위해 경로를 런타임에 조립
+const _dsoSegments = ['@', '/', 'components', '/subtitle/', 'DualSubtitleOverlay'];
+const _dsoModulePath = _dsoSegments.join('');
+const _dsoMod = await import(/* @vite-ignore */ _dsoModulePath).catch(() => null);
+if (_dsoMod && typeof _dsoMod === 'object' && 'DualSubtitleOverlay' in _dsoMod) {
+  DualSubtitleOverlay = (_dsoMod as Record<string, unknown>)[
+    'DualSubtitleOverlay'
+  ] as DualSubtitleOverlayType;
+}
 
 // 테스트용 샘플 cue 데이터
 const sampleCues: DualCue[] = [
@@ -71,7 +65,10 @@ const sampleCues: DualCue[] = [
   },
 ];
 
-describe.skipIf(() => !DualSubtitleOverlay)('DualSubtitleOverlay', () => {
+// skipIf에 boolean을 직접 전달 — 모듈 로드 시점에 평가되므로 컴포넌트 구현 후 자동 활성화
+const dsoComponentMissing = !DualSubtitleOverlay;
+
+describe.skipIf(dsoComponentMissing)('DualSubtitleOverlay', () => {
   it('활성 cue가 없을 때 아무것도 렌더링하지 않는다', () => {
     const Overlay = DualSubtitleOverlay!;
     const { container } = render(
@@ -107,40 +104,38 @@ describe.skipIf(() => !DualSubtitleOverlay)('DualSubtitleOverlay', () => {
     expect(screen.getByText('오신 것을 환영합니다, 오늘의 주제는 경제입니다.')).toBeDefined();
   });
 
-  it("order='source-first' (기본값)일 때 원문이 번역문보다 위에 위치한다", () => {
+  it.each([
+    {
+      order: 'source-first' as SubtitleOrder,
+      label: '원문이 번역문보다 위에 위치한다',
+      // source-first: 원문(first)이 번역문(second)보다 앞에 위치해야 함
+      // compareDocumentPosition: DOCUMENT_POSITION_FOLLOWING = 4 (두 번째 인자가 뒤에 있음)
+      firstText: 'ようこそ、今日のテーマは経済です。',
+      secondText: '오신 것을 환영합니다, 오늘의 주제는 경제입니다.',
+    },
+    {
+      order: 'target-first' as SubtitleOrder,
+      label: '번역문이 원문보다 위에 위치한다',
+      // target-first: 번역문(first)이 원문(second)보다 앞에 위치해야 함
+      firstText: '오신 것을 환영합니다, 오늘의 주제는 경제입니다.',
+      secondText: 'ようこそ、今日のテーマは経済です。',
+    },
+  ])("order='$order': $label", ({ order, firstText, secondText }) => {
     const Overlay = DualSubtitleOverlay!;
     render(
       React.createElement(Overlay, {
         cues: sampleCues,
         currentTime: 4000,
-        order: 'source-first' as SubtitleOrder,
+        order,
       }),
     );
 
-    const sourceEl = screen.getByText('ようこそ、今日のテーマは経済です。');
-    const translatedEl = screen.getByText('오신 것을 환영합니다, 오늘의 주제는 경제입니다.');
+    const firstEl = screen.getByText(firstText);
+    const secondEl = screen.getByText(secondText);
 
-    // compareDocumentPosition: DOCUMENT_POSITION_FOLLOWING = 4
-    // sourceEl이 translatedEl보다 앞에 위치해야 함
-    const position = sourceEl.compareDocumentPosition(translatedEl);
-    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("order='target-first'일 때 번역문이 원문보다 위에 위치한다", () => {
-    const Overlay = DualSubtitleOverlay!;
-    render(
-      React.createElement(Overlay, {
-        cues: sampleCues,
-        currentTime: 4000,
-        order: 'target-first' as SubtitleOrder,
-      }),
-    );
-
-    const sourceEl = screen.getByText('ようこそ、今日のテーマは経済です。');
-    const translatedEl = screen.getByText('오신 것을 환영합니다, 오늘의 주제는 경제입니다.');
-
-    // 번역문 요소가 원문 요소보다 앞에 위치해야 함 (DOCUMENT_POSITION_FOLLOWING)
-    const position = translatedEl.compareDocumentPosition(sourceEl);
+    // firstEl이 secondEl보다 앞에 위치해야 함
+    // DOCUMENT_POSITION_FOLLOWING(4): secondEl이 firstEl 뒤에 있을 때 세트
+    const position = firstEl.compareDocumentPosition(secondEl);
     expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -204,20 +199,6 @@ describe.skipIf(() => !DualSubtitleOverlay)('DualSubtitleOverlay', () => {
     expect(screen.getByText('原文テキスト')).toBeDefined();
   });
 
-  it('data-testid="dual-line" 요소가 두 개 렌더링된다', () => {
-    const Overlay = DualSubtitleOverlay!;
-    render(
-      React.createElement(Overlay, {
-        cues: sampleCues,
-        currentTime: 4000,
-      }),
-    );
-
-    // 구현에서 data-testid="dual-line"을 사용하는 경우 두 줄이 있어야 함
-    const dualLines = document.querySelectorAll('[data-testid="dual-line"]');
-    if (dualLines.length > 0) {
-      expect(dualLines.length).toBe(2);
-    }
-    // data-testid를 사용하지 않는 구현이라면 텍스트 기반 검증으로 충분
-  });
+  // data-testid="dual-line" 검증은 구현 내부 세부사항이므로 제거
+  // DOM 순서 테스트(it.each order)가 동일한 동작을 더 명확하게 검증한다
 });

@@ -18,7 +18,29 @@ import { test, expect } from '@playwright/test';
 
 test.describe('US1: dual subtitle 재생 (P1 acceptance)', () => {
   test('YouTube URL → 처리 완료 → dual subtitle 재생', async ({ page }) => {
-    // 1. 메인 페이지 진입
+    // Phase 3i 구현 시: page.route()는 반드시 page.goto() 이전에 등록해야 적용됨
+    //
+    // await page.route('**/api/jobs', async (route) => {
+    //   await route.fulfill({
+    //     json: { id: 'test-job-id', status: 'queued' }
+    //   });
+    // });
+    //
+    // await page.route('**/api/jobs/**', async (route) => {
+    //   await route.fulfill({
+    //     json: { id: 'test-job-id', status: 'completed', cues: [] }
+    //   });
+    // });
+    //
+    // SSE mock (EventSource):
+    // await page.route('**/api/jobs/**/events', async (route) => {
+    //   await route.fulfill({
+    //     headers: { 'Content-Type': 'text/event-stream' },
+    //     body: 'data: {"type":"status_changed","status":"completed"}\n\n',
+    //   });
+    // });
+
+    // 1. 메인 페이지 진입 (route 등록 이후에 진행)
     await page.goto('/');
 
     // 2. URL 입력 — 유효한 YouTube 영상 URL
@@ -31,22 +53,7 @@ test.describe('US1: dual subtitle 재생 (P1 acceptance)', () => {
     // 4. 작업 상세 페이지(/jobs/:id)로 라우팅 확인
     await expect(page).toHaveURL(/\/jobs\//);
 
-    // 5. 처리 완료 대기 — e2e 환경에서는 page.route()로 API mock을 적용해 즉시 completed 전이
-    //    Phase 3i 구현 시 아래 mock을 추가한다:
-    //
-    //    await page.route('**/api/jobs/**', async (route) => {
-    //      await route.fulfill({
-    //        json: { id: 'test-job-id', status: 'completed', ... }
-    //      });
-    //    });
-    //
-    //    SSE mock (EventSource):
-    //    await page.route('**/api/jobs/**/events', async (route) => {
-    //      await route.fulfill({
-    //        headers: { 'Content-Type': 'text/event-stream' },
-    //        body: 'data: {"type":"status_changed","status":"completed"}\n\n',
-    //      });
-    //    });
+    // 5. 처리 완료 대기 — Phase 3i에서 위 route mock을 활성화하면 즉시 전이됨
 
     // 6. 재생 가능 상태 진입 확인 — 자막 컨트롤 버튼 노출 대기
     await expect(page.getByRole('button', { name: /자막/ })).toBeVisible({ timeout: 10000 });
@@ -88,23 +95,13 @@ test.describe('US1: dual subtitle 재생 (P1 acceptance)', () => {
     const input = page.getByRole('textbox');
     await input.fill('https://google.com/not-youtube');
 
-    // 3. "시작" 버튼이 비활성화 상태이거나 클릭 시 오류를 표시해야 함
+    // 3. "시작" 버튼이 비활성화 상태여야 함
+    //    유효하지 않은 YouTube URL이므로 버튼은 disabled 상태를 유지해야 함
     const button = page.getByRole('button', { name: /시작/ });
-
-    // 버튼이 비활성화되어 있으면 오류 메시지가 이미 표시 중
-    const isDisabled = await button.isDisabled();
-    if (!isDisabled) {
-      await button.click();
-    }
+    await expect(button).toBeDisabled();
 
     // 4. 페이지 URL이 변경되지 않아야 함 (작업 미생성)
     await expect(page).toHaveURL('/');
-
-    // 5. 오류 메시지 또는 비활성화 상태 확인
-    const hasError =
-      isDisabled ||
-      (await page.locator('[role="alert"], [aria-live="assertive"]').count()) > 0;
-    expect(hasError).toBe(true);
   });
 
   test('자막 없는 영상 처리 시 사용자 친화적 실패 메시지가 표시된다', async ({ page }) => {

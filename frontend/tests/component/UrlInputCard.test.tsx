@@ -12,7 +12,7 @@
  *   4. 유효하지 않은 URL: 인라인 오류 메시지 표시
  *   5. 제출 이벤트: onSubmit prop 호출 및 검증된 URL 전달
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
@@ -25,23 +25,20 @@ type UrlInputCardType = React.ComponentType<{
 // 컴포넌트가 아직 구현되지 않은 경우 undefined로 유지
 let UrlInputCard: UrlInputCardType | undefined;
 
-beforeAll(async () => {
-  try {
-    // Vite의 정적 import 분석을 우회하기 위해 경로를 런타임에 조립
-    // 정적 문자열 리터럴이 아니므로 Vite는 번들 시점에 해석하지 않음
-    const segments = ['@', '/', 'components', '/url-input/', 'UrlInputCard'];
-    const modulePath = segments.join('');
-    const mod = await import(/* @vite-ignore */ modulePath).catch(() => null);
-    if (mod && typeof mod === 'object' && 'UrlInputCard' in mod) {
-      UrlInputCard = (mod as Record<string, unknown>)['UrlInputCard'] as UrlInputCardType;
-    }
-  } catch {
-    // 미구현 상태 — skip 처리
-  }
-});
+// Vite의 정적 import 분석을 우회하기 위해 경로를 런타임에 조립
+// 정적 문자열 리터럴이 아니므로 Vite는 번들 시점에 해석하지 않음
+const segments = ['@', '/', 'components', '/url-input/', 'UrlInputCard'];
+const modulePath = segments.join('');
+const _urlInputCardMod = await import(/* @vite-ignore */ modulePath).catch(() => null);
+if (_urlInputCardMod && typeof _urlInputCardMod === 'object' && 'UrlInputCard' in _urlInputCardMod) {
+  UrlInputCard = (_urlInputCardMod as Record<string, unknown>)['UrlInputCard'] as UrlInputCardType;
+}
+
+// skipIf에 boolean을 직접 전달 — 모듈 로드 시점에 평가되므로 컴포넌트 구현 후 자동 활성화
+const componentMissing = !UrlInputCard;
 
 // UrlInputCard 미구현 시 전체 describe를 skip
-describe.skipIf(() => !UrlInputCard)('UrlInputCard', () => {
+describe.skipIf(componentMissing)('UrlInputCard', () => {
   const Component = () => {
     // describe 실행 시점에 UrlInputCard가 반드시 정의되어 있음
     const Card = UrlInputCard!;
@@ -129,17 +126,19 @@ describe.skipIf(() => !UrlInputCard)('UrlInputCard', () => {
 
   it('비 YouTube URL 입력 시 오류 메시지가 비어있지 않다 (한국어)', async () => {
     const user = userEvent.setup();
-    render(<Component />);
+    const { container } = render(<Component />);
 
     const input = screen.getByRole('textbox');
     await user.type(input, 'https://vimeo.com/123456789');
     await user.tab();
 
-    // 오류 텍스트가 빈 문자열이 아닌지 확인
-    // 구현에서 어떤 selector를 사용하든, 화면에 오류 텍스트가 나타나야 함
-    const allText = document.body.textContent ?? '';
-    // 한국어 오류 메시지가 포함되어 있어야 함
-    const hasKoreanErrorText = /[가-힣]/.test(allText);
-    expect(hasKoreanErrorText).toBe(true);
+    // 오류 요소가 존재해야 하며 한국어 텍스트를 포함해야 함
+    // role="alert" 가 표준 접근성 패턴 — 다른 구현 패턴도 포함
+    const errorEl = container.querySelector(
+      '[role="alert"], [aria-live], .error-message, [data-testid="url-error"]',
+    );
+    expect(errorEl).not.toBeNull();
+    expect(errorEl?.textContent).toMatch(/[가-힣]/);
+    expect(errorEl?.textContent?.trim()).not.toBe('');
   });
 });
