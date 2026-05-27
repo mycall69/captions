@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Runtime
+var/
+.env
+.env.local
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
