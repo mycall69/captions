@@ -1,19 +1,18 @@
 """T057: 이중 자막(Dual Subtitle) 생성기.
 
-원문(source)과 번역문(translated) 두 큐 목록을 받아
+원문(source)과 번역문(translated) 두 SubtitleCue 목록을 받아
 큐별 두 줄(원문+번역문) 형태의 SRT 또는 VTT 문자열을 반환한다.
 
 FR-017: source-first / target-first 순서 옵션 지원
 FR-018: SRT(,) / VTT(.) 타임스탬프 형식 구분
 FR-019: 큐당 두 줄 본문
-
-입력 큐 타입은 SubtitleCue 또는 ChunkCue 모두 허용한다
-(두 모델 모두 sequence / start_ms / end_ms / text 필드를 가짐).
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
+
+from app.domain.subtitles.models import SubtitleCue
 
 
 def _format_srt_time(ms: int) -> str:
@@ -45,15 +44,15 @@ def _build_lines(
 
 
 def generate_dual_srt(
-    source: list[Any],
-    translated: list[Any],
+    source: list[SubtitleCue],
+    translated: list[SubtitleCue],
     *,
     order: Literal["source-first", "target-first"] = "source-first",
 ) -> str:
     """두 큐 목록을 병합하여 이중 자막 SRT 문자열을 반환한다.
 
     Args:
-        source: 원문 큐 목록 (SubtitleCue 또는 ChunkCue).
+        source: 원문 큐 목록 (SubtitleCue).
         translated: 번역 큐 목록. source와 길이가 같아야 한다.
         order: 'source-first'이면 원문이 위, 'target-first'이면 번역문이 위.
 
@@ -80,15 +79,15 @@ def generate_dual_srt(
 
 
 def generate_dual_vtt(
-    source: list[Any],
-    translated: list[Any],
+    source: list[SubtitleCue],
+    translated: list[SubtitleCue],
     *,
     order: Literal["source-first", "target-first"] = "source-first",
 ) -> str:
     """두 큐 목록을 병합하여 이중 자막 VTT 문자열을 반환한다.
 
     Args:
-        source: 원문 큐 목록 (SubtitleCue 또는 ChunkCue).
+        source: 원문 큐 목록 (SubtitleCue).
         translated: 번역 큐 목록. source와 길이가 같아야 한다.
         order: 'source-first'이면 원문이 위, 'target-first'이면 번역문이 위.
 

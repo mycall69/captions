@@ -4,6 +4,8 @@
 - SRT/VTT 파싱 → 동일 cue 수 + 동일 텍스트 (sample.ja.srt vs sample.ja.vtt)
 - overlapping.srt: 겹치는 cue 정리 (cue[i].end_ms <= cue[i+1].start_ms)
 - with_empty.srt: 빈 cue 제거 + 시퀀스 보존
+- 동일 start_ms 큐 중복 시 앞 큐 제거 (ValidationError 회귀 방지)
+- VTT 1자리 밀리초 파싱 정확도 (_vtt_ts_to_ms 회귀)
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ pytest.importorskip(
 )
 
 from app.domain.subtitles.normalize import (  # noqa: E402  # type: ignore[reportMissingImports]
+    _vtt_ts_to_ms,
     normalize_srt,
     normalize_vtt,
 )
@@ -112,3 +115,37 @@ class TestNormalizeWithEmpty:
         cues = normalize_srt((FIXTURES / "with_empty.srt").read_text(encoding="utf-8"))
         for idx, cue in enumerate(cues, start=1):
             assert cue.sequence == idx
+
+
+class TestOverlapSameStartMs:
+    """동일 start_ms 퇴화 케이스 회귀 테스트 (ValidationError 방지)."""
+
+    def test_identical_start_ms_drops_earlier_cue(self) -> None:
+        """두 cue의 start_ms가 동일할 때 앞 cue를 제거하고 ValidationError 없이 정규화해야 한다."""
+        # cue 1: start=0, end=500 / cue 2: start=0, end=1000
+        # 클리핑 시 cue1.end → 0 이 되어 start_ms == end_ms → 제거 대상
+        srt_content = (
+            "1\n00:00:00,000 --> 00:00:00,500\n첫 번째 cue.\n\n"
+            "2\n00:00:00,000 --> 00:00:01,000\n두 번째 cue — 동일 start_ms.\n"
+        )
+        cues = normalize_srt(srt_content)
+        # 앞 cue(더 긴 end를 가진 cue가 두 번째이므로 첫 번째가 제거됨)
+        assert len(cues) == 1
+        assert cues[0].text == "두 번째 cue — 동일 start_ms."
+        assert cues[0].sequence == 1
+
+
+class TestVttTimestampParsing:
+    """_vtt_ts_to_ms: 1~3자리 밀리초 파싱 정확도 회귀 테스트."""
+
+    def test_one_digit_ms_scaled_correctly(self) -> None:
+        """'00:00:01.5' 는 1500 ms 이어야 한다."""
+        assert _vtt_ts_to_ms("00:00:01.5") == 1500
+
+    def test_two_digit_ms_scaled_correctly(self) -> None:
+        """'00:00:01.05' 는 1050 ms 이어야 한다."""
+        assert _vtt_ts_to_ms("00:00:01.05") == 1050
+
+    def test_three_digit_ms_unchanged(self) -> None:
+        """'00:00:01.500' 는 1500 ms 이어야 한다."""
+        assert _vtt_ts_to_ms("00:00:01.500") == 1500

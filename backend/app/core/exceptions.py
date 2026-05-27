@@ -76,6 +76,13 @@ class UserCancelledError(DomainError):
     http_status = 409
 
 
+class JobNotReadyError(DomainError):
+    """작업이 아직 완료되지 않아 자막을 사용할 수 없는 경우 (처리 중)."""
+
+    code = "JOB_NOT_READY"
+    http_status = 409
+
+
 class RateLimitedError(DomainError):
     """요청 빈도가 임계치를 초과한 경우."""
 

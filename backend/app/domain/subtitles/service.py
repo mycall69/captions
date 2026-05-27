@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import JobNotReadyError
 from app.domain.subtitles.dual_generator import generate_dual_srt, generate_dual_vtt
 from app.domain.subtitles.models import SubtitleCue, SubtitleFormat, SubtitleKind, SubtitleTrack
 
@@ -38,6 +38,10 @@ class SubtitleRepository(Protocol):
         limit: int,
     ) -> tuple[list[SubtitleCue], int]:
         """트랙의 큐 목록을 페이징하여 (큐 목록, 전체 수) 튜플로 반환한다."""
+        ...
+
+    async def load_all_cues(self, track_id: str) -> list[SubtitleCue]:
+        """트랙의 전체 큐 목록을 반환한다 (페이징 없음)."""
         ...
 
 
@@ -74,12 +78,12 @@ class SubtitlesService:
             (큐 목록, 전체 큐 수) 튜플.
 
         Raises:
-            ConflictError: 해당 kind의 트랙이 없는 경우.
+            JobNotReadyError: 해당 kind의 트랙이 아직 준비되지 않은 경우 (작업 처리 중).
         """
         track = await self._repo.get_track(job_id, kind)
         if track is None:
-            raise ConflictError(
-                f"자막 트랙을 찾을 수 없다: job_id={job_id!r}, kind={kind!r}"
+            raise JobNotReadyError(
+                f"자막이 아직 준비되지 않았습니다 (처리 중): job_id={job_id!r}, kind={kind!r}"
             )
         return await self._repo.list_cues(track.id, offset=offset, limit=limit)
 
@@ -101,22 +105,17 @@ class SubtitlesService:
             이중 자막 SRT 또는 VTT 문자열.
 
         Raises:
-            ConflictError: source 또는 translated 트랙이 없는 경우.
+            JobNotReadyError: source 또는 translated 트랙이 아직 준비되지 않은 경우 (작업 처리 중).
         """
         source_track = await self._repo.get_track(job_id, "source")
-        if source_track is None:
-            raise ConflictError(
-                f"원문 자막 트랙을 찾을 수 없다: job_id={job_id!r}"
-            )
-
         translated_track = await self._repo.get_track(job_id, "translated")
-        if translated_track is None:
-            raise ConflictError(
-                f"번역 자막 트랙을 찾을 수 없다: job_id={job_id!r}"
+        if source_track is None or translated_track is None:
+            raise JobNotReadyError(
+                f"자막이 아직 준비되지 않았습니다 (처리 중): job_id={job_id!r}"
             )
 
-        src_cues = source_track.cues
-        tgt_cues = translated_track.cues
+        src_cues = await self._repo.load_all_cues(source_track.id)
+        tgt_cues = await self._repo.load_all_cues(translated_track.id)
 
         if format == "srt":
             return generate_dual_srt(src_cues, tgt_cues, order=order)

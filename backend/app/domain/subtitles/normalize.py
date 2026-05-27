@@ -30,8 +30,11 @@ def _vtt_ts_to_ms(ts: str) -> int:
         h, m, s_ms = "0", parts[0], parts[1]
     else:
         raise ValueError(f"잘못된 VTT 타임스탬프 형식: {ts!r}")
-    s, ms = s_ms.split(".")
-    return int(h) * 3_600_000 + int(m) * 60_000 + int(s) * 1_000 + int(ms)
+    s, ms_str = s_ms.split(".")
+    # 1자리→×100, 2자리→×10, 3자리 그대로 (좌측 패딩 후 3자리로 자름)
+    ms_str = ms_str.ljust(3, "0")[:3]
+    ms = int(ms_str)
+    return int(h) * 3_600_000 + int(m) * 60_000 + int(s) * 1_000 + ms
 
 
 def _normalize_text(text: str) -> str:
@@ -50,22 +53,32 @@ def _apply_normalization(raw_cues: list[SubtitleCue]) -> list[SubtitleCue]:
     # 1단계: 빈 텍스트 제거
     cues = [c for c in raw_cues if c.text.strip() != ""]
 
-    # 2단계: 겹침 클리핑 — cue[i].end_ms > cue[i+1].start_ms 인 경우 클리핑
-    for i in range(len(cues) - 1):
-        if cues[i].end_ms > cues[i + 1].start_ms:
-            # model_validator 우회를 위해 새 객체 생성
-            clipped_end = cues[i + 1].start_ms
-            cues[i] = SubtitleCue(
-                sequence=cues[i].sequence,
-                start_ms=cues[i].start_ms,
-                end_ms=clipped_end,
-                text=cues[i].text,
+    # 2단계: 겹침 클리핑 — cue[i].end_ms > cue[i+1].start_ms 인 경우 클리핑.
+    # 클리핑 결과 start_ms >= end_ms 가 되면 해당 큐를 제거한다.
+    cleaned_cues = cues
+    result: list[SubtitleCue] = []
+    for i, cue in enumerate(cleaned_cues):
+        if i + 1 < len(cleaned_cues):
+            next_start = cleaned_cues[i + 1].start_ms
+            if cue.end_ms > next_start:
+                if cue.start_ms >= next_start:
+                    # 퇴화 케이스: 이 큐의 시작이 다음 큐 시작과 같거나 이후 → 제거
+                    continue
+                new_end = next_start
+            else:
+                new_end = cue.end_ms
+        else:
+            new_end = cue.end_ms
+        result.append(
+            SubtitleCue(
+                sequence=cue.sequence,
+                start_ms=cue.start_ms,
+                end_ms=new_end,
+                text=cue.text,
             )
+        )
 
-    # 3단계: 클리핑 후 start_ms >= end_ms 큐 제거 (이미 SubtitleCue 생성 시 검증되지만 방어적 처리)
-    cues = [c for c in cues if c.end_ms > c.start_ms]
-
-    # 4단계: 시퀀스 재부여
+    # 3단계: 시퀀스 재부여
     return [
         SubtitleCue(
             sequence=idx,
@@ -73,7 +86,7 @@ def _apply_normalization(raw_cues: list[SubtitleCue]) -> list[SubtitleCue]:
             end_ms=c.end_ms,
             text=c.text,
         )
-        for idx, c in enumerate(cues, start=1)
+        for idx, c in enumerate(result, start=1)
     ]
 
 
