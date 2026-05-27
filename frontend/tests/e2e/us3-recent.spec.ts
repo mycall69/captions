@@ -66,7 +66,8 @@ test.describe('US3: 최근 작업 재방문 (P3 acceptance)', () => {
       await expect(page.getByText('재방문 테스트 영상')).toBeVisible();
 
       // 4) "재생" CTA 클릭 → /jobs/:id 라우팅
-      await page.getByRole('button', { name: /재생/ }).first().click();
+      //    strict-mode 가 키 중복(예: 같은 id 가 두 번 렌더되는 버그)을 잡아내도록 `.first()` 미사용.
+      await page.getByRole('button', { name: /재생/ }).click();
       await expect(page).toHaveURL(new RegExp(`/jobs/${SAMPLE_JOB_ID}`));
     },
   );

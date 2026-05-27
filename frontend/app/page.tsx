@@ -15,6 +15,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { apiFetch, ApiError } from '@/lib/api/client';
+import { Button } from '@/components/ui/button';
 import { UrlInputCard } from '@/components/url-input/UrlInputCard';
 import { JobListItem } from '@/components/job-list/JobListItem';
 import { EmptyState } from '@/components/job-list/EmptyState';
@@ -71,14 +72,14 @@ export default function HomePage() {
           <h2 id="recent-jobs-heading" className="text-lg font-semibold">
             최근 작업
           </h2>
-          <button
-            type="button"
-            className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => recent.refetch()}
             disabled={recent.isFetching}
           >
             {recent.isFetching ? '새로고침 중…' : '새로고침 ↻'}
-          </button>
+          </Button>
         </div>
 
         {recent.isLoading && (

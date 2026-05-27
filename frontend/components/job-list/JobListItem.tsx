@@ -65,7 +65,7 @@ function formatKoRelative(iso: string | null | undefined): string {
   return `${day}일 전`;
 }
 
-export function JobListItem({ job, className }: JobListItemProps) {
+function JobListItemImpl({ job, className }: JobListItemProps) {
   const router = useRouter();
   const title = job.metadata.title ?? job.youtube_video_id;
   const channel = job.metadata.channel ?? '';
@@ -85,12 +85,10 @@ export function JobListItem({ job, className }: JobListItemProps) {
   const stageLabel = STAGE_LABEL_KO[job.status];
 
   // 처리 일시(상대 시간) — FR-029 acceptance 시나리오 1.
-  // 완료 → completed_at, 실패 → updated_at(또는 created_at), 진행 중 → updated_at.
+  // 완료 → completed_at, 그 외(진행 중·실패) → updated_at(없으면 created_at).
   const relTimeSource = isCompleted
     ? (job.completed_at ?? job.updated_at)
-    : isFailed
-      ? (job.updated_at ?? job.created_at)
-      : (job.updated_at ?? job.created_at);
+    : (job.updated_at ?? job.created_at);
   const relTimeLabel = formatKoRelative(relTimeSource);
 
   // CTA 라벨 / 핸들러 — variant 별 정책.
@@ -166,3 +164,6 @@ export function JobListItem({ job, className }: JobListItemProps) {
     </li>
   );
 }
+
+// 리스트 아이템이므로 부모 재조회마다 불필요한 재렌더를 막기 위해 메모이즈한다.
+export const JobListItem = React.memo(JobListItemImpl);
