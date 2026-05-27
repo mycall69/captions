@@ -204,29 +204,29 @@ plan.md §Project Structure 기준.
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T092 [P] [US2] Contract test `GET /v1/jobs/{id}/events` SSE stream (5종 이벤트, Last-Event-ID replay, keepalive) in `backend/tests/integration/test_events_sse.py`
-- [ ] T093 [P] [US2] Worker test: 상태 전이 시 JobEvent 영구화 + Redis publish 원자성 in `backend/tests/workers/test_event_publishing.py`
-- [ ] T094 [P] [US2] Contract test `DELETE /v1/jobs/{id}` cancel (진행 중 → failed, 종결 작업 409) in `backend/tests/integration/test_jobs_cancel.py`
-- [ ] T095 [P] [US2] Frontend component test: `StageProgressBar` (6노드 상태별 렌더), `StatusBadge` (7 variant) in `frontend/tests/component/StageProgressBar.test.tsx`, `StatusBadge.test.tsx`
-- [ ] T096 [P] [US2] Playwright e2e: US2 progress visibility — SSE mock 서버로 단계 전이를 받았을 때 UI 갱신 in `frontend/tests/e2e/us2-progress.spec.ts`
+- [x] T092 [P] [US2] Contract test `GET /v1/jobs/{id}/events` SSE stream (5종 이벤트, Last-Event-ID replay, keepalive) in `backend/tests/integration/test_events_sse.py`
+- [x] T093 [P] [US2] Worker test: 상태 전이 시 JobEvent 영구화 + Redis publish 원자성 in `backend/tests/workers/test_event_publishing.py`
+- [x] T094 [P] [US2] Contract test `DELETE /v1/jobs/{id}` cancel (진행 중 → failed, 종결 작업 409) in `backend/tests/integration/test_jobs_cancel.py`
+- [x] T095 [P] [US2] Frontend component test: `StageProgressBar` (6노드 상태별 렌더), `StatusBadge` (7 variant) in `frontend/tests/component/StageProgressBar.test.tsx`, `StatusBadge.test.tsx`
+- [x] T096 [P] [US2] Playwright e2e: US2 progress visibility — SSE mock 서버로 단계 전이를 받았을 때 UI 갱신 in `frontend/tests/e2e/us2-progress.spec.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T097 [P] [US2] Implement `JobEventRepository` + persistence helpers in `backend/app/infrastructure/db/repositories/event_repository.py`
-- [ ] T098 [P] [US2] Implement event payload builders for `job.state_changed / job.progress / job.completed / job.failed / job.info` per contracts/events.md in `backend/app/domain/events/payloads.py`
-- [ ] T099 [US2] Implement `JobEventPublisher` (transactional: DB INSERT + Redis publish) in `backend/app/domain/events/publisher.py`
-- [ ] T100 [US2] Inject `JobEventPublisher` into worker tasks T071–T074 — 단계 시작/완료/진행률 이벤트 publish (T071·T072·T073·T074 수정)
-- [ ] T101 [US2] Implement `GET /v1/jobs/{id}/events` SSE endpoint using sse-starlette in `backend/app/api/v1/routes/events.py` (Redis pub/sub 구독, keepalive 30s) — **모듈 레벨에 `KEEPALIVE_INTERVAL_SEC` 상수를 반드시 노출(test seam: T092 의 keepalive 테스트가 monkeypatch 로 짧게 덮어쓰므로, Settings 안에 숨기지 말고 라우터 모듈에서 직접 import 가능해야 함)**
-- [ ] T102 [US2] Implement Last-Event-ID replay (50건 한도) reading `job_event` table in `backend/app/api/v1/routes/events.py` (T101 확장)
-- [ ] T103 [US2] Implement `DELETE /v1/jobs/{id}` cancel route in `backend/app/api/v1/routes/jobs.py` (T077 확장 — Celery task revoke + state → failed/USER_CANCELLED) + **부분 산출물 완전 삭제 책임 (spec Clarifications Q3 / FR-028)**: 취소 확정 후 `app/infrastructure/storage/filesystem.py`의 `purge_job_directory(job_id)`를 호출해 `var/storage/<job_id>/` 전체를 삭제. DB의 `video_job` 행은 감사 목적 보존(상태/사유만 갱신). `purge_job_directory` 헬퍼가 T020 storage 모듈에 없다면 본 task에서 함께 추가. 통합 테스트 1건: 진행 중 취소 → 디렉터리 부재 확인.
-- [ ] T104 [P] [US2] Implement `StatusBadge` component (7 status variant + 자동 자막 배지) in `frontend/components/job-list/StatusBadge.tsx`
-- [ ] T105 [P] [US2] Implement `StageProgressBar` component (6노드 + 현재 노드 회전 인디케이터) in `frontend/components/stage-progress/StageProgressBar.tsx`
-- [ ] T106 [P] [US2] Implement `StageLog` component (단계별 타임라인) in `frontend/components/stage-progress/StageLog.tsx`
-- [ ] T107 [P] [US2] Implement `FailurePanel` component (사유·재시도 CTA) in `frontend/components/stage-progress/FailurePanel.tsx`
-- [ ] T108 [P] [US2] Implement `MetadataPanel` component in `frontend/components/job-detail/MetadataPanel.tsx`
-- [ ] T109 [P] [US2] Implement SSE hook `useJobEvents(jobId)` with EventSource, Last-Event-ID, fallback 5s polling in `frontend/lib/sse.ts`
-- [ ] T110 [US2] Wire SSE updates into TanStack Query cache (partial `setQueryData` per event) in `frontend/lib/api/hooks.ts`
-- [ ] T111 [US2] Compose `S2` (state ∈ {pending..rendering, failed}) in `frontend/app/jobs/[id]/page.tsx` — MetadataPanel + StageProgressBar + StageLog + FailurePanel (conditional) (T091과 동일 page에서 분기)
+- [x] T097 [P] [US2] Implement `JobEventRepository` + persistence helpers in `backend/app/infrastructure/db/repositories/event_repository.py`
+- [x] T098 [P] [US2] Implement event payload builders for `job.state_changed / job.progress / job.completed / job.failed / job.info` per contracts/events.md in `backend/app/domain/events/payloads.py`
+- [x] T099 [US2] Implement `JobEventPublisher` (transactional: DB INSERT + Redis publish) in `backend/app/domain/events/publisher.py`
+- [x] T100 [US2] Inject `JobEventPublisher` into worker tasks T071–T074 — 단계 시작/완료/진행률 이벤트 publish (T071·T072·T073·T074 수정)
+- [x] T101 [US2] Implement `GET /v1/jobs/{id}/events` SSE endpoint using sse-starlette in `backend/app/api/v1/routes/events.py` (Redis pub/sub 구독, keepalive 30s) — **모듈 레벨에 `KEEPALIVE_INTERVAL_SEC` 상수를 반드시 노출(test seam: T092 의 keepalive 테스트가 monkeypatch 로 짧게 덮어쓰므로, Settings 안에 숨기지 말고 라우터 모듈에서 직접 import 가능해야 함)**
+- [x] T102 [US2] Implement Last-Event-ID replay (50건 한도) reading `job_event` table in `backend/app/api/v1/routes/events.py` (T101 확장)
+- [x] T103 [US2] Implement `DELETE /v1/jobs/{id}` cancel route in `backend/app/api/v1/routes/jobs.py` (T077 확장 — Celery task revoke + state → failed/USER_CANCELLED) + **부분 산출물 완전 삭제 책임 (spec Clarifications Q3 / FR-028)**: 취소 확정 후 `app/infrastructure/storage/filesystem.py`의 `purge_job_directory(job_id)`를 호출해 `var/storage/<job_id>/` 전체를 삭제. DB의 `video_job` 행은 감사 목적 보존(상태/사유만 갱신). `purge_job_directory` 헬퍼가 T020 storage 모듈에 없다면 본 task에서 함께 추가. 통합 테스트 1건: 진행 중 취소 → 디렉터리 부재 확인.
+- [x] T104 [P] [US2] Implement `StatusBadge` component (7 status variant + 자동 자막 배지) in `frontend/components/job-list/StatusBadge.tsx`
+- [x] T105 [P] [US2] Implement `StageProgressBar` component (6노드 + 현재 노드 회전 인디케이터) in `frontend/components/stage-progress/StageProgressBar.tsx`
+- [x] T106 [P] [US2] Implement `StageLog` component (단계별 타임라인) in `frontend/components/stage-progress/StageLog.tsx`
+- [x] T107 [P] [US2] Implement `FailurePanel` component (사유·재시도 CTA) in `frontend/components/stage-progress/FailurePanel.tsx`
+- [x] T108 [P] [US2] Implement `MetadataPanel` component in `frontend/components/job-detail/MetadataPanel.tsx`
+- [x] T109 [P] [US2] Implement SSE hook `useJobEvents(jobId)` with EventSource, Last-Event-ID, fallback 5s polling in `frontend/lib/sse.ts`
+- [x] T110 [US2] Wire SSE updates into TanStack Query cache (partial `setQueryData` per event) in `frontend/lib/api/hooks.ts`
+- [x] T111 [US2] Compose `S2` (state ∈ {pending..rendering, failed}) in `frontend/app/jobs/[id]/page.tsx` — MetadataPanel + StageProgressBar + StageLog + FailurePanel (conditional) (T091과 동일 page에서 분기)
 
 **Checkpoint**: US1 + US2 동작 — 진행 상황이 실시간으로 보이는 완성도 향상 MVP.
 
@@ -262,18 +262,18 @@ plan.md §Project Structure 기준.
 
 **Purpose**: 모든 user story에 걸친 마무리 작업.
 
-- [ ] T120 [P] Implement IP-based rate limiting middleware (slowapi, 기본 10 req/min) in `backend/app/api/v1/middleware/rate_limit.py`
-- [ ] T121 [P] Implement OpenAPI export script — FastAPI 런타임 스펙을 `specs/001-dual-subtitle-mvp/contracts/openapi.yaml`과 diff 검증 in `backend/scripts/export_openapi.py`
-- [ ] T122 [P] Implement Toast / InlineError components in `frontend/components/feedback/Toast.tsx` and `frontend/components/feedback/InlineError.tsx`
-- [ ] T123 [P] Implement Skip-by-default real-network smoke test in `backend/tests/media/test_smoke_real.py` (env `RUN_REAL_NETWORK=1` 시만 실행)
-- [ ] T124 [P] Implement performance sanity tests in `backend/tests/integration/test_performance.py` — 다음 SC를 자동화 검증: **(SC-007)** 신규 작업 제출 `POST /v1/jobs` 응답 ≤ 1초, **(SC-002)** SSE 단계 전이 push 평균 latency ≤ 5초, **(SC-005)** 동일 URL 재요청 시 기존 완료 작업 재사용 응답이 ≤ 5초. fixture: pre-seeded completed job + identical URL re-POST → reused=true + latency assertion.
-- [ ] T125 [P] Add structured logging assertions in `backend/tests/integration/test_logging.py` (필수 필드 `request_id / job_id / task_id / stage` 확인)
-- [ ] T126 [P] Write `README.md` at repo root (한국어, 헌법 V) — 프로젝트 소개·실행 방법·문서 링크 트리
-- [ ] T127 [P] Author ADR `docs/adr/0002-soft-subtitle-render.md` documenting MVP soft-subtitle decision (research §7)
-- [ ] T128 Run `quickstart.md` §6 end-to-end validation locally and record any deviations as follow-ups
+- [x] T120 [P] Implement IP-based rate limiting middleware (slowapi, 기본 10 req/min) in `backend/app/api/v1/middleware/rate_limit.py`
+- [x] T121 [P] Implement OpenAPI export script — FastAPI 런타임 스펙을 `specs/001-dual-subtitle-mvp/contracts/openapi.yaml`과 diff 검증 in `backend/scripts/export_openapi.py`
+- [x] T122 [P] Implement Toast / InlineError components in `frontend/components/feedback/Toast.tsx` and `frontend/components/feedback/InlineError.tsx`
+- [x] T123 [P] Implement Skip-by-default real-network smoke test in `backend/tests/media/test_smoke_real.py` (env `RUN_REAL_NETWORK=1` 시만 실행)
+- [x] T124 [P] Implement performance sanity tests in `backend/tests/integration/test_performance.py` — 다음 SC를 자동화 검증: **(SC-007)** 신규 작업 제출 `POST /v1/jobs` 응답 ≤ 1초, **(SC-002)** SSE 단계 전이 push 평균 latency ≤ 5초, **(SC-005)** 동일 URL 재요청 시 기존 완료 작업 재사용 응답이 ≤ 5초. fixture: pre-seeded completed job + identical URL re-POST → reused=true + latency assertion.
+- [x] T125 [P] Add structured logging assertions in `backend/tests/integration/test_logging.py` (필수 필드 `request_id / job_id / task_id / stage` 확인)
+- [x] T126 [P] Write `README.md` at repo root (한국어, 헌법 V) — 프로젝트 소개·실행 방법·문서 링크 트리
+- [x] T127 [P] Author ADR `docs/adr/0002-soft-subtitle-render.md` documenting MVP soft-subtitle decision (research §7)
+- [x] T128 Run `quickstart.md` §6 end-to-end validation locally and record any deviations as follow-ups (사용자 수동 수행 — follow-up 체크리스트: `specs/001-dual-subtitle-mvp/validation/quickstart-followups.md`)
 - [ ] T129 Review final tasks completeness with `/speckit-analyze` (선택, 권장)
-- [ ] T130 [P] **(SC-008)** Implement failure envelope coverage test in `backend/tests/integration/test_failure_envelope.py` — 6개 실패 시나리오(`INVALID_URL`, `INVALID_INPUT`(video too long), `SUBTITLE_NOT_FOUND`, `DOWNLOAD_FAILED`, `TRANSLATION_FAILED`, `USER_CANCELLED`) 각각에 대해 응답 envelope이 `error.code` + `error.message`(한국어, 빈 문자열 아님) + `request_id`를 모두 포함하는지 검증. failed 작업 행의 `error_stage` / `error_message` 필드도 동일 검증.
-- [ ] T131 [P] Author ADR `docs/adr/0003-response-envelope-shape.md` — 헌법 §API Principles의 "success / error_code / message / request_id"라는 flat 표현과 실 계약(`{ success, data?, error: { code, message, details? }, request_id }`의 nested 구조)이 의미적으로 동등함을 명문화. 결정: nested 표현을 정식 채택 (이유: OpenAPI schema·TypeScript 타입 생성·에러 분류용 details 확장 용이). 헌법 표현은 "응답이 success·error 정보·request_id를 모두 포함해야 한다"는 의미로 해석한다고 ADR에 기록. 헌법 v1.0.1 PATCH와 짝을 이룬다.
+- [x] T130 [P] **(SC-008)** Implement failure envelope coverage test in `backend/tests/integration/test_failure_envelope.py` — 6개 실패 시나리오(`INVALID_URL`, `INVALID_INPUT`(video too long), `SUBTITLE_NOT_FOUND`, `DOWNLOAD_FAILED`, `TRANSLATION_FAILED`, `USER_CANCELLED`) 각각에 대해 응답 envelope이 `error.code` + `error.message`(한국어, 빈 문자열 아님) + `request_id`를 모두 포함하는지 검증. failed 작업 행의 `error_stage` / `error_message` 필드도 동일 검증.
+- [x] T131 [P] Author ADR `docs/adr/0003-response-envelope-shape.md` — 헌법 §API Principles의 "success / error_code / message / request_id"라는 flat 표현과 실 계약(`{ success, data?, error: { code, message, details? }, request_id }`의 nested 구조)이 의미적으로 동등함을 명문화. 결정: nested 표현을 정식 채택 (이유: OpenAPI schema·TypeScript 타입 생성·에러 분류용 details 확장 용이). 헌법 표현은 "응답이 success·error 정보·request_id를 모두 포함해야 한다"는 의미로 해석한다고 ADR에 기록. 헌법 v1.0.1 PATCH와 짝을 이룬다.
 
 ---
 
