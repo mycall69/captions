@@ -151,7 +151,7 @@ export function FailurePanel({
               onClick={handleRetry}
               data-testid="failure-retry"
             >
-              다시 시도
+              동일 URL 재시도
             </Button>
           )}
           <Button
@@ -160,7 +160,7 @@ export function FailurePanel({
             onClick={handleHome}
             data-testid="failure-home"
           >
-            처음으로
+            새 영상으로 다시 시도
           </Button>
         </div>
       </CardContent>

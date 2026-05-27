@@ -74,9 +74,7 @@ function resolveNodeState(
     return 'future';
   }
   // completed → 모든 단계가 done
-  if (status === 'completed') {
-    return stage === 'completed' ? 'done' : 'done';
-  }
+  if (status === 'completed') return 'done';
   const currentIndex = NODE_ORDER.indexOf(status as StageKey);
   if (currentIndex === -1) return 'future';
   if (index < currentIndex) return 'done';

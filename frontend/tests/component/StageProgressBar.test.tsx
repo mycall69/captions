@@ -133,8 +133,10 @@ describe.skipIf(componentMissing)('StageProgressBar', () => {
       const node =
         nodes.find((n) => n.getAttribute('data-stage') === NODE_ORDER[i]) ??
         nodes[i];
-      const dataState = node.getAttribute('data-state') ?? '';
-      const className = node.className ?? '';
+      // noUncheckedIndexedAccess: nodes[i] 가 undefined 가능 → 명시적 가드 후 사용.
+      expect(node).toBeDefined();
+      const dataState = node!.getAttribute('data-state') ?? '';
+      const className = node!.className ?? '';
       const isDone =
         dataState === 'done' || /\b(done|completed|complete)\b/i.test(className);
       expect(isDone).toBe(true);
@@ -153,8 +155,10 @@ describe.skipIf(componentMissing)('StageProgressBar', () => {
       const node =
         nodes.find((n) => n.getAttribute('data-stage') === NODE_ORDER[i]) ??
         nodes[i];
-      const dataState = node.getAttribute('data-state') ?? '';
-      const className = node.className ?? '';
+      // noUncheckedIndexedAccess: nodes[i] 가 undefined 가능 → 명시적 가드 후 사용.
+      expect(node).toBeDefined();
+      const dataState = node!.getAttribute('data-state') ?? '';
+      const className = node!.className ?? '';
       // done / current 모두 아니어야 함.
       // 주의: `\b(done|complete|current|active)\b` 같은 광역 regex 는
       // `stage-completed` (literal "completed" 단계의 클래스) 와 충돌하므로
