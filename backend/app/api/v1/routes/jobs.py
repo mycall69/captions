@@ -1,7 +1,9 @@
-"""T077, T078: /v1/jobs 라우터 — 작업 생성 및 조회 엔드포인트.
+"""T077, T078, T103: /v1/jobs 라우터 — 작업 생성, 조회, 취소 엔드포인트.
 
 T077: POST /v1/jobs — URL 검증 → create_or_reuse → Celery 체인 디스패치 → 201/200 응답
 T078: GET /v1/jobs/{job_id} — 작업 조회 → 200 응답
+T103: DELETE /v1/jobs/{job_id} — 진행 중 작업 취소 + 부분 산출물 디렉터리 삭제
+       (spec Clarifications Q3 / FR-028)
 
 module-level 훅:
 - fetch_video_duration: 테스트에서 monkeypatch로 교체 가능한 영상 길이 조회 함수
@@ -10,6 +12,8 @@ module-level 훅:
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -17,8 +21,12 @@ from app.api.v1.dependencies import jobs_service
 from app.api.v1.envelope import success_envelope
 from app.api.v1.schemas.jobs import CreateJobRequest
 from app.core.config import get_settings
-from app.core.exceptions import InvalidInputError
+from app.core.exceptions import IllegalStateTransitionError, InvalidInputError
 from app.domain.jobs.service import JobsService
+from app.domain.jobs.states import TERMINAL_STATUSES
+from app.infrastructure.storage.filesystem import JobStorage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -100,3 +108,71 @@ async def get_job(
     job = await service.get(job_id)
     request_id: str = getattr(request.state, "request_id", "")
     return success_envelope(job.model_dump(mode="json"), request_id)
+
+
+# ── 테스트 monkeypatch 훅: 작업 디렉터리 삭제 ────────────────────────────────
+
+
+def _purge_job_storage(job_id: str) -> None:
+    """job 디렉터리(`var/storage/<job_id>/`) 전체를 삭제한다.
+
+    실패해도 취소 응답 자체는 성공 처리한다 (감사 로그만 남김).
+    테스트에서 monkeypatch 로 교체 가능하다.
+    """
+    try:
+        JobStorage().purge_job_directory(job_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("job.cancel.purge_failed", extra={"job_id": job_id}, exc_info=True)
+
+
+@router.delete("/jobs/{job_id}")
+async def cancel_job(
+    job_id: str,
+    request: Request,
+    service: JobsService = Depends(jobs_service),  # noqa: B008
+) -> dict[str, object]:
+    """DELETE /v1/jobs/{job_id} — 진행 중 작업을 취소한다.
+
+    동작 (spec Clarifications Q3 / FR-028):
+
+    1. 작업 존재 확인 — 없으면 404.
+    2. 종결 상태(completed/failed) 작업이면 409 ILLEGAL_STATE.
+    3. 그렇지 않으면 ``failed`` 로 전이 + ``error_code=USER_CANCELLED`` 기록.
+    4. ``var/storage/<job_id>/`` 디렉터리를 완전 삭제 (부분 산출물 purge).
+
+    Celery 작업 ID 는 별도로 보관되지 않으므로 revoke 는 생략한다 — 워커는
+    매 단계 진입 시 ``video_job.status`` 를 다시 확인하여 ``failed`` 면 즉시
+    중단한다 (작업 자체적 협조 취소).
+
+    Returns:
+        표준 success envelope (data = USER_CANCELLED 상태로 갱신된 VideoJob).
+
+    Raises:
+        NotFoundError: 존재하지 않는 job_id → 404.
+        IllegalStateTransitionError: 종결 상태 작업 → 409 ILLEGAL_STATE.
+    """
+    request_id: str = getattr(request.state, "request_id", "")
+
+    # 1) 존재 확인 (NotFoundError → 404)
+    current = await service.get(job_id)
+
+    # 2) 종결 상태 확인 — completed / failed 는 취소 불가
+    if current.status in TERMINAL_STATUSES:
+        raise IllegalStateTransitionError(
+            f"종결된 작업은 취소할 수 없습니다 (status={current.status.value})",
+            details={"job_id": job_id, "status": current.status.value},
+        )
+
+    # 3) failed 전이 + USER_CANCELLED 기록
+    cancelled = await service.mark_failed(
+        job_id,
+        error_stage="user",
+        error_code="USER_CANCELLED",
+        error_message="사용자가 작업을 취소했습니다",
+    )
+
+    # 4) 디렉터리 purge — 실패해도 응답은 성공
+    _purge_job_storage(job_id)
+
+    logger.info("job.cancelled", extra={"job_id": job_id})
+    return success_envelope(cancelled.model_dump(mode="json"), request_id)

@@ -56,13 +56,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # T082: /v1 라우터 마운트 — jobs, subtitles, media 라우터를 /v1 접두사로 등록
-    from app.api.v1.routes import jobs, media, subtitles
+    # T082 / T101: /v1 라우터 마운트 — jobs, subtitles, media, events 라우터 등록
+    from app.api.v1.routes import events, jobs, media, subtitles
 
     api_v1_router = APIRouter(prefix="/v1")
     api_v1_router.include_router(jobs.router, tags=["jobs"])
     api_v1_router.include_router(subtitles.router, tags=["subtitles"])
     api_v1_router.include_router(media.router, tags=["media"])
+    api_v1_router.include_router(events.router, tags=["events"])
     app.include_router(api_v1_router)
 
     return app
