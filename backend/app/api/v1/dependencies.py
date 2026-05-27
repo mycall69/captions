@@ -88,3 +88,15 @@ def event_bus() -> SubscribableBus:
         settings = get_settings()
         _event_bus_singleton = EventBus(redis_url=settings.redis_url)
     return _event_bus_singleton
+
+
+async def shutdown_event_bus() -> None:
+    """프로세스 종료 시 EventBus 싱글턴의 Redis connection pool 을 닫는다.
+
+    싱글턴이 초기화된 적이 없으면 no-op. ``app.main.lifespan`` 의 shutdown
+    단계에서 호출한다 — 모듈 private 싱글턴을 외부에 노출하지 않기 위한 헬퍼.
+    """
+    global _event_bus_singleton  # noqa: PLW0603
+    if _event_bus_singleton is not None:
+        await _event_bus_singleton.close()
+        _event_bus_singleton = None

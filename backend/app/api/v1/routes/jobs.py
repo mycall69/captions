@@ -13,6 +13,7 @@ module-level 훅:
 from __future__ import annotations
 
 import logging
+import shutil
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -123,7 +124,8 @@ def _purge_job_storage(job_id: str) -> None:
     """
     try:
         JobStorage().purge_job_directory(job_id)
-    except Exception:  # noqa: BLE001
+    except (OSError, shutil.Error):
+        # 파일시스템 I/O 오류만 흡수한다 — 그 외 예외(TypeError 등)는 버그 신호이므로 상위로 전파.
         logger.warning("job.cancel.purge_failed", extra={"job_id": job_id}, exc_info=True)
 
 
@@ -159,6 +161,11 @@ async def cancel_job(
     """
     request_id: str = getattr(request.state, "request_id", "")
 
+    # USER_CANCELLED 오류 메타 — mark_failed / publish_failed 양쪽이 동일한 값을 사용한다.
+    _CANCEL_ERROR_STAGE = "user"
+    _CANCEL_ERROR_CODE = "USER_CANCELLED"
+    _CANCEL_ERROR_MESSAGE = "사용자가 작업을 취소했습니다"
+
     # 1) 존재 확인 (NotFoundError → 404)
     current = await service.get(job_id)
 
@@ -172,9 +179,9 @@ async def cancel_job(
     # 3) failed 전이 + USER_CANCELLED 기록
     cancelled = await service.mark_failed(
         job_id,
-        error_stage="user",
-        error_code="USER_CANCELLED",
-        error_message="사용자가 작업을 취소했습니다",
+        error_stage=_CANCEL_ERROR_STAGE,
+        error_code=_CANCEL_ERROR_CODE,
+        error_message=_CANCEL_ERROR_MESSAGE,
     )
 
     # 4) ``job.failed`` SSE 이벤트 발행 — SSE 구독 중인 클라이언트가 취소를
@@ -182,12 +189,18 @@ async def cancel_job(
     publisher = JobEventPublisher(session=session, bus=bus)
     await publisher.publish_failed(
         job_id=job_id,
-        error_stage="user",
-        error_code="USER_CANCELLED",
-        error_message="사용자가 작업을 취소했습니다",
+        error_stage=_CANCEL_ERROR_STAGE,
+        error_code=_CANCEL_ERROR_CODE,
+        error_message=_CANCEL_ERROR_MESSAGE,
     )
 
-    # 5) 디렉터리 purge — 실패해도 응답은 성공
+    # 5) DB 상태를 먼저 영속화한 뒤 디렉터리를 purge 한다.
+    #    dep teardown 의 commit 실패 시 디렉터리만 삭제되고 전이 기록이 사라지는
+    #    race 를 막기 위해 명시적으로 커밋 → 그 후에만 purge 를 수행한다.
+    #    (teardown 의 추가 commit 은 no-op 으로 안전하다.)
+    await session.commit()
+
+    # 6) 디렉터리 purge — 실패해도 응답은 성공
     _purge_job_storage(job_id)
 
     logger.info("job.cancelled", extra={"job_id": job_id})

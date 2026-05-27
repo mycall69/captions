@@ -33,6 +33,7 @@ from app.core.exceptions import NotFoundError
 from app.core.ids import new_event_id
 from app.domain.events.bus import job_channel
 from app.domain.events.payloads import build_state_changed_event
+from app.infrastructure.db.orm import JobEvent
 from app.infrastructure.db.repositories.event_repository import (
     DEFAULT_REPLAY_LIMIT,
     JobEventRepository,
@@ -117,7 +118,7 @@ async def stream_job_events(
     # 2) replay 분: SSE response 객체 생성 전에 미리 조회한다
     #    (이벤트 generator 내부에서 세션을 다시 사용해도 안전하지만,
     #     테스트 환경의 세션 lifecycle 단순화를 위해 동기 fetch).
-    replay_events: list[Any] = []
+    replay_events: list[JobEvent] = []
     if after_seq is not None:
         event_repo = JobEventRepository(session)
         replay_events = await event_repo.list_after(

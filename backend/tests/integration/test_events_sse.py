@@ -289,23 +289,28 @@ class TestSseLastEventIdReplay:
         구현이 51건 이상 replay 하면 어떤 카운트(60, 199, ...) 든 실패해야 한다.
         """
         try:
+            from app.core.ids import new_event_id
+            from app.domain.events.payloads import build_progress_event
             from app.infrastructure.db.orm import JobEvent
         except ImportError:
-            pytest.skip("JobEvent ORM 미구현 — replay 캡 검증 보류")
+            pytest.skip("JobEvent ORM / payload 빌더 미구현 — replay 캡 검증 보류")
 
         # 1) 60건의 prior event 를 동일 job_id 로 시드한다.
+        #    payload 는 ``build_progress_event`` 로 생성해 스키마 변경 시 테스트가
+        #    자연스럽게 따라가도록 한다 (events.md §`job.progress`).
         for i in range(1, 61):
+            payload = build_progress_event(
+                job_id=in_progress_job_id,
+                seq=i,
+                event_id=new_event_id(),
+                status="translating",
+                progress=i / 100.0,
+            )
             db_session.add(
                 JobEvent(
                     job_id=in_progress_job_id,
                     event_type="job.progress",
-                    payload=json.dumps(
-                        {
-                            "job_id": in_progress_job_id,
-                            "seq": i,
-                            "progress": i / 100.0,
-                        }
-                    ),
+                    payload=json.dumps(payload, ensure_ascii=False),
                 )
             )
         await db_session.commit()

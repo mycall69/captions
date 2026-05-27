@@ -24,9 +24,19 @@ from app.core.logging import configure_logging
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
-    """앱 시작 시 logging을 초기화한다."""
+    """앱 lifecycle — 시작 시 로깅을 초기화하고 종료 시 EventBus 싱글턴을 닫는다.
+
+    EventBus 싱글턴은 Redis async client connection pool 을 들고 있으므로,
+    프로세스 종료 시 명시적으로 닫지 않으면 connection leak warning 이 남는다.
+    """
     configure_logging()
-    yield
+    try:
+        yield
+    finally:
+        # SSE 핸들러용 EventBus 싱글턴을 닫는다 (lazy 초기화된 경우에만 동작).
+        from app.api.v1.dependencies import shutdown_event_bus
+
+        await shutdown_event_bus()
 
 
 def create_app() -> FastAPI:

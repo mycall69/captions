@@ -80,20 +80,24 @@ async def client(db_session: AsyncSession) -> AsyncIterator[object]:
         async def publish(self, channel: str, payload: dict[_Any, _Any]) -> None:  # noqa: ARG002
             return None
 
-        async def subscribe(
+        def subscribe(
             self,
             channel: str,  # noqa: ARG002
             *,
             ready: _asyncio.Event | None = None,
         ) -> _AsyncGenerator[dict[str, _Any], None]:
-            if ready is not None:
-                ready.set()
-            # 짧게 활성 상태 유지 — keepalive 테스트가 최소 1프레임을 수신할 수 있게
-            # 함과 동시에 기본 keepalive(30s) 테스트가 hang 되지 않도록 종료한다.
-            await _asyncio.sleep(0.1)
-            if False:  # 타입 체커에 async generator 임을 알리기 위한 더미 yield
-                yield {}
-            return
+            # 프로덕션 ``EventBus.subscribe`` 와 동일한 시그니처(eager 함수 →
+            # AsyncGenerator 반환)로 ``SubscribableBus`` Protocol 형태를 일치시킨다.
+            async def _gen() -> _AsyncGenerator[dict[str, _Any], None]:
+                if ready is not None:
+                    ready.set()
+                # 짧게 활성 상태 유지 — keepalive 테스트가 최소 1프레임을 수신할 수 있게
+                # 함과 동시에 기본 keepalive(30s) 테스트가 hang 되지 않도록 종료한다.
+                await _asyncio.sleep(0.1)
+                return
+                yield {}  # unreachable — async generator 타이핑 유지 전용
+
+            return _gen()
 
     fake_bus = _TestBus()
 
