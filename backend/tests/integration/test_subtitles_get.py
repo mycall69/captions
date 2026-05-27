@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
@@ -23,7 +22,7 @@ pytest.importorskip(
     reason="awaiting Phase 3h implementation",
 )
 
-from httpx import ASGITransport, AsyncClient  # noqa: E402
+from httpx import AsyncClient  # noqa: E402
 
 from app.core.ids import new_job_id  # noqa: E402
 from app.infrastructure.db.orm import (  # noqa: E402
@@ -31,17 +30,10 @@ from app.infrastructure.db.orm import (  # noqa: E402
     SubtitleTrack,
     VideoJob,
 )
-from app.main import app  # noqa: E402  # type: ignore[reportMissingImports]
 
 pytestmark = pytest.mark.integration
 
 _VALID_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcY"
-
-
-@pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
 
 
 @pytest.fixture

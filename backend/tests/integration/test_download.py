@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,11 +23,10 @@ pytest.importorskip(
     reason="awaiting Phase 3h implementation",
 )
 
-from httpx import ASGITransport, AsyncClient  # noqa: E402
+from httpx import AsyncClient  # noqa: E402
 
 from app.core.ids import new_job_id  # noqa: E402
 from app.infrastructure.db.orm import VideoAsset, VideoJob  # noqa: E402
-from app.main import app  # noqa: E402  # type: ignore[reportMissingImports]
 
 pytestmark = pytest.mark.integration
 
@@ -50,12 +48,6 @@ _SAMPLE_SRT_TARGET_FIRST = """\
 こんにちは、世界。
 
 """
-
-
-@pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
 
 
 @pytest.fixture
@@ -229,8 +221,9 @@ class TestDownloadNotCompleted:
             f"/v1/jobs/{pending_job_id}/download", params={"format": "srt"}
         )
         assert resp.status_code == 409
-        assert resp.json()["success"] is False
-        error_code = resp.json().get("error", {}).get("code", "")
+        body = resp.json()
+        assert body["success"] is False
+        error_code = body.get("error", {}).get("code", "")
         assert isinstance(error_code, str) and error_code, (
             "에러 응답에 비어있지 않은 error.code 문자열이 있어야 한다 (예: CONFLICT 또는 JOB_NOT_READY)"
         )

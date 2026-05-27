@@ -51,26 +51,18 @@ class TestExtractSubtitlesManualFirst:
                 side_effect=fake_download_auto,
             ),
         ):
-            try:
-                extract_subtitles_task("test_job_001")
-            except Exception:
-                pass
+            extract_subtitles_task("test_job_001")
 
-        if call_order:
-            assert call_order[0] == "manual", (
-                "manual subtitle 다운로드가 auto보다 먼저 시도되어야 한다 (FR-008)"
-            )
+        assert call_order[0] == "manual", (
+            "manual subtitle 다운로드가 auto보다 먼저 시도되어야 한다 (FR-008)"
+        )
 
     def test_auto_not_called_when_manual_succeeds(self) -> None:
         """manual subtitle이 성공하면 auto 다운로드는 호출되지 않아야 한다."""
-        auto_called = [False]
+        from unittest.mock import MagicMock
 
-        def fake_download_manual(*_a: object, **_kw: object) -> list[str]:
-            return ["source.ja.vtt"]
-
-        def fake_download_auto(*_a: object, **_kw: object) -> list[str]:
-            auto_called[0] = True
-            return []
+        fake_download_manual = MagicMock(return_value=["source.ja.vtt"])
+        fake_download_auto = MagicMock(return_value=[])
 
         with (
             patch(
@@ -82,12 +74,9 @@ class TestExtractSubtitlesManualFirst:
                 side_effect=fake_download_auto,
             ),
         ):
-            try:
-                extract_subtitles_task("test_job_002")
-            except Exception:
-                pass
+            extract_subtitles_task("test_job_002")
 
-        assert not auto_called[0], "manual 성공 시 auto가 호출되면 안 된다 (FR-008)"
+        assert fake_download_auto.call_count == 0, "manual 성공 시 auto가 호출되면 안 된다 (FR-008)"
 
 
 class TestExtractSubtitlesFallback:
@@ -95,14 +84,10 @@ class TestExtractSubtitlesFallback:
 
     def test_auto_used_when_manual_not_found(self) -> None:
         """manual 자막이 없으면 auto로 fallback되어야 한다."""
-        auto_called = [False]
+        from unittest.mock import MagicMock
 
-        def fake_download_manual(*_a: object, **_kw: object) -> list[str]:
-            return []  # manual 없음
-
-        def fake_download_auto(*_a: object, **_kw: object) -> list[str]:
-            auto_called[0] = True
-            return ["source.ja.vtt"]
+        fake_download_manual = MagicMock(return_value=[])  # manual 없음
+        fake_download_auto = MagicMock(return_value=["source.ja.vtt"])
 
         with (
             patch(
@@ -114,12 +99,9 @@ class TestExtractSubtitlesFallback:
                 side_effect=fake_download_auto,
             ),
         ):
-            try:
-                extract_subtitles_task("test_job_003")
-            except Exception:
-                pass
+            extract_subtitles_task("test_job_003")
 
-        assert auto_called[0], "manual 없을 때 auto fallback이 호출되어야 한다 (FR-008)"
+        assert fake_download_auto.call_count >= 1, "manual 없을 때 auto fallback이 호출되어야 한다 (FR-008)"
 
 
 class TestExtractSubtitlesFailure:
@@ -164,15 +146,12 @@ class TestExtractSubtitlesFailure:
                 side_effect=fake_download_auto,
             ),
         ):
-            try:
-                extract_subtitles_task(job_id)
-            except Exception:
-                pass
+            extract_subtitles_task(job_id)
 
         result = await session.execute(
             select(VideoJob).where(VideoJob.id == job_id)
         )
         db_job = result.scalar_one_or_none()
-        if db_job is not None:
-            assert db_job.status == "failed"
-            assert db_job.error_code == "SUBTITLE_NOT_FOUND"
+        assert db_job is not None
+        assert db_job.status == "failed"
+        assert db_job.error_code == "SUBTITLE_NOT_FOUND"

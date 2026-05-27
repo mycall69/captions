@@ -8,8 +8,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import pytest
 
 pytest.importorskip(
@@ -21,19 +19,11 @@ pytest.importorskip(
     reason="awaiting Phase 3h implementation — 라우터 배선",
 )
 
-from httpx import ASGITransport, AsyncClient  # noqa: E402
-
-from app.main import app  # noqa: E402  # type: ignore[reportMissingImports]
+from httpx import AsyncClient  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
 _VALID_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcY"
-
-
-@pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
 
 
 @pytest.fixture

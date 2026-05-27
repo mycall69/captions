@@ -22,8 +22,6 @@ from app.domain.subtitles.normalize import (  # noqa: E402  # type: ignore[repor
     normalize_vtt,
 )
 
-pytestmark: list[object] = []  # 유닛 테스트에는 추가 마커 불필요
-
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "subtitles"
 
 
@@ -47,7 +45,6 @@ class TestParseSrtAndVtt:
 
     def test_ko_vtt_parse_returns_5_cues(self) -> None:
         """sample.ko.vtt 파싱 결과는 5개 cue이어야 한다."""
-        from app.infrastructure.storage import filesystem  # noqa: F401 — ensure fixtures exist
         path = FIXTURES / "sample.ko.vtt"
         if not path.exists():
             pytest.skip("sample.ko.vtt fixture 없음")

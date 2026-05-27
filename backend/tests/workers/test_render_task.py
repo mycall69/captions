@@ -27,6 +27,19 @@ from app.core.ids import new_job_id  # noqa: E402
 pytestmark = pytest.mark.workers
 
 
+class _FakeStorage:
+    """테스트용 JobStorage 대체 — tmp_path 하위에 파일을 저장한다."""
+
+    def __init__(self, tmp_path: Path, *_a: object, **_kw: object) -> None:
+        self._tmp = tmp_path
+
+    def subtitle_path(self, job_id: str, name: str) -> Path:  # noqa: ARG002
+        return self._tmp / name
+
+    def job_dir(self, job_id: str) -> Path:  # noqa: ARG002
+        return self._tmp
+
+
 @pytest_asyncio.fixture
 async def job_id_with_cues(db_session: object, tmp_path: Path) -> str:  # type: ignore[type-arg]
     """번역된 cue가 있는 작업을 DB에 준비하고 job_id를 반환한다."""
@@ -87,69 +100,32 @@ class TestRenderTaskOutput:
         self, job_id_with_cues: str, tmp_path: Path
     ) -> None:
         """render_task 완료 후 dual.srt + dual.vtt 두 파일이 생성되어야 한다."""
-        srt_created = [False]
-        vtt_created = [False]
-
-        class FakeStorage:
-            def __init__(self, *_a: object, **_kw: object) -> None:
-                pass
-
-            def subtitle_path(self, job_id: str, name: str) -> Path:
-                path = tmp_path / name
-                return path
-
-            def job_dir(self, job_id: str) -> Path:
-                return tmp_path
-
-        def fake_save_asset(*_a: object, **_kw: object) -> None:
-            pass
+        import functools
 
         with (
-            patch("app.workers.tasks.render.JobStorage", FakeStorage),  # type: ignore[reportMissingImports]
-            patch("app.workers.tasks.render.save_video_asset", side_effect=fake_save_asset, create=True),  # type: ignore[reportMissingImports]
+            patch("app.workers.tasks.render.JobStorage", functools.partial(_FakeStorage, tmp_path)),  # type: ignore[reportMissingImports]
+            patch("app.workers.tasks.render.save_video_asset", create=True),  # type: ignore[reportMissingImports]
         ):
-            try:
-                render_task(job_id_with_cues)
-            except Exception:
-                pass
+            render_task(job_id_with_cues)
 
         srt_path = tmp_path / "dual.srt"
         vtt_path = tmp_path / "dual.vtt"
 
-        if srt_path.exists():
-            srt_created[0] = True
-        if vtt_path.exists():
-            vtt_created[0] = True
-
-        # 파일이 생성된 경우 두 파일 모두 있어야 함
-        if srt_created[0] or vtt_created[0]:
-            assert srt_created[0] and vtt_created[0], (
-                "dual.srt + dual.vtt 두 파일이 모두 생성되어야 한다"
-            )
+        assert srt_path.exists() and vtt_path.exists(), (
+            "dual.srt + dual.vtt 두 파일이 모두 생성되어야 한다"
+        )
 
     async def test_dual_srt_has_two_lines_per_cue(
         self, job_id_with_cues: str, tmp_path: Path
     ) -> None:
         """생성된 SRT 파일의 각 cue는 두 줄(원문 + 번역)을 가져야 한다 (FR-019)."""
-
-        class FakeStorage:
-            def __init__(self, *_a: object, **_kw: object) -> None:
-                pass
-
-            def subtitle_path(self, job_id: str, name: str) -> Path:
-                return tmp_path / name
-
-            def job_dir(self, job_id: str) -> Path:
-                return tmp_path
+        import functools
 
         with (
-            patch("app.workers.tasks.render.JobStorage", FakeStorage),  # type: ignore[reportMissingImports]
+            patch("app.workers.tasks.render.JobStorage", functools.partial(_FakeStorage, tmp_path)),  # type: ignore[reportMissingImports]
             patch("app.workers.tasks.render.save_video_asset", create=True),  # type: ignore[reportMissingImports]
         ):
-            try:
-                render_task(job_id_with_cues)
-            except Exception:
-                pass
+            render_task(job_id_with_cues)
 
         srt_path = tmp_path / "dual.srt"
         if not srt_path.exists():
@@ -169,6 +145,8 @@ class TestRenderTaskOutput:
         self, job_id_with_cues: str, db_session: object, tmp_path: Path  # type: ignore[type-arg]
     ) -> None:
         """render_task 완료 후 DB에 dual_srt + dual_vtt VideoAsset 행이 삽입되어야 한다."""
+        import functools
+
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -176,23 +154,8 @@ class TestRenderTaskOutput:
 
         session: AsyncSession = db_session  # type: ignore[assignment]
 
-        class FakeStorage:
-            def __init__(self, *_a: object, **_kw: object) -> None:
-                pass
-
-            def subtitle_path(self, job_id: str, name: str) -> Path:
-                path = tmp_path / name
-                path.write_bytes(b"fake content")
-                return path
-
-            def job_dir(self, job_id: str) -> Path:
-                return tmp_path
-
-        with patch("app.workers.tasks.render.JobStorage", FakeStorage):  # type: ignore[reportMissingImports]
-            try:
-                render_task(job_id_with_cues)
-            except Exception:
-                pass
+        with patch("app.workers.tasks.render.JobStorage", functools.partial(_FakeStorage, tmp_path)):  # type: ignore[reportMissingImports]
+            render_task(job_id_with_cues)
 
         result = await session.execute(
             select(VideoAsset).where(
@@ -201,8 +164,7 @@ class TestRenderTaskOutput:
             )
         )
         assets = result.scalars().all()
-        if assets:
-            kinds = {a.kind for a in assets}
-            assert "dual_srt" in kinds and "dual_vtt" in kinds, (
-                f"dual_srt + dual_vtt 두 VideoAsset 행이 모두 삽입되어야 한다, 실제: {kinds}"
-            )
+        kinds = {a.kind for a in assets}
+        assert "dual_srt" in kinds and "dual_vtt" in kinds, (
+            f"dual_srt + dual_vtt 두 VideoAsset 행이 모두 삽입되어야 한다, 실제: {kinds}"
+        )

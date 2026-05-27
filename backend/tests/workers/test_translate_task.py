@@ -13,11 +13,6 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.fixtures.fake_provider import (
-    FakeTranslationProvider,
-    RateLimitedTranslationProvider,
-)
-
 pytest.importorskip(
     "app.workers.tasks.translate",
     reason="awaiting Phase 3b implementation — app.workers.tasks.translate",
@@ -29,6 +24,10 @@ from app.workers.tasks.translate import (
 
 from app.domain.translation.provider import (  # noqa: E402
     ChunkCue,
+)
+from tests.fixtures.fake_provider import (  # noqa: E402
+    FakeTranslationProvider,
+    RateLimitedTranslationProvider,
 )
 
 pytestmark = pytest.mark.workers
@@ -58,12 +57,8 @@ class TestTranslateTaskContextPassing:
             "app.workers.tasks.translate.get_translation_provider",  # type: ignore[reportMissingImports]
             return_value=provider,
         ):
-            try:
-                translate_task("test_job_context_01")
-            except Exception:
-                pass
+            translate_task("test_job_context_01")
 
-        # provider가 실제로 호출된 경우 context 검증
         for chunk in provider.received_chunks:
             # context_before는 이전 청크의 마지막 최대 3 cue
             assert len(chunk.context_before) <= 3, (
@@ -81,16 +76,12 @@ class TestTranslateTaskContextPassing:
             "app.workers.tasks.translate.get_translation_provider",  # type: ignore[reportMissingImports]
             return_value=provider,
         ):
-            try:
-                translate_task("test_job_context_02")
-            except Exception:
-                pass
+            translate_task("test_job_context_02")
 
-        if provider.received_chunks:
-            first_chunk = provider.received_chunks[0]
-            assert first_chunk.context_before == [], (
-                "첫 번째 청크의 context_before가 비어있어야 한다"
-            )
+        first_chunk = provider.received_chunks[0]
+        assert first_chunk.context_before == [], (
+            "첫 번째 청크의 context_before가 비어있어야 한다"
+        )
 
     def test_last_chunk_has_empty_context_after(self) -> None:
         """마지막 청크의 context_after는 비어있어야 한다 (research §5)."""
@@ -100,16 +91,12 @@ class TestTranslateTaskContextPassing:
             "app.workers.tasks.translate.get_translation_provider",  # type: ignore[reportMissingImports]
             return_value=provider,
         ):
-            try:
-                translate_task("test_job_context_03")
-            except Exception:
-                pass
+            translate_task("test_job_context_03")
 
-        if provider.received_chunks:
-            last_chunk = provider.received_chunks[-1]
-            assert last_chunk.context_after == [], (
-                "마지막 청크의 context_after가 비어있어야 한다"
-            )
+        last_chunk = provider.received_chunks[-1]
+        assert last_chunk.context_after == [], (
+            "마지막 청크의 context_after가 비어있어야 한다"
+        )
 
 
 class TestTranslateTaskRateLimitRetry:
@@ -123,18 +110,13 @@ class TestTranslateTaskRateLimitRetry:
             "app.workers.tasks.translate.get_translation_provider",  # type: ignore[reportMissingImports]
             return_value=provider,
         ):
-            try:
-                translate_task.apply(args=("test_job_rate_limit_01",))
-            except Exception:
-                pass
+            translate_task.apply(args=("test_job_rate_limit_01",))
 
         # research §6: 1회 최초 시도 + 4회 retry = 총 5회 호출 (backoff: 1s, 2s, 4s, 8s)
-        # 구현이 완료되면 call_count == 5 (최초 1 + retry 4)
-        if provider.call_count > 0:
-            assert provider.call_count == 5, (
-                f"rate limit retry는 최초 1회 + 4회 retry = 총 5회 호출이어야 한다 "
-                f"(research §6), 실제: {provider.call_count}회"
-            )
+        assert provider.call_count == 5, (
+            f"rate limit retry는 최초 1회 + 4회 retry = 총 5회 호출이어야 한다 "
+            f"(research §6), 실제: {provider.call_count}회"
+        )
 
     def test_all_retries_exhausted_marks_job_failed(self) -> None:
         """모든 retry 소진 후 작업이 failed + TRANSLATION_FAILED 상태가 되어야 한다."""
@@ -156,16 +138,11 @@ class TestTranslateTaskRateLimitRetry:
                 create=True,
             ),
         ):
-            try:
-                translate_task.apply(args=("test_job_rate_limit_02",))
-            except Exception:
-                pass
+            translate_task.apply(args=("test_job_rate_limit_02",))
 
-        # status가 갱신된 경우 failed가 포함되어야 함
-        if status_updates:
-            assert "failed" in status_updates, (
-                "모든 retry 소진 후 status가 failed로 갱신되어야 한다"
-            )
+        assert "failed" in status_updates, (
+            "모든 retry 소진 후 status가 failed로 갱신되어야 한다"
+        )
 
 
 class TestTranslateTaskChunking:
@@ -179,10 +156,7 @@ class TestTranslateTaskChunking:
             "app.workers.tasks.translate.get_translation_provider",  # type: ignore[reportMissingImports]
             return_value=provider,
         ):
-            try:
-                translate_task("test_job_chunk_01")
-            except Exception:
-                pass
+            translate_task("test_job_chunk_01")
 
         # provider가 주입되어 실행된 경우 최소 1번 호출되어야 함
         # TODO(T073): cue 분할 개수에 따른 정확한 청크 수 검증은 T073 구현 단계에서 추가

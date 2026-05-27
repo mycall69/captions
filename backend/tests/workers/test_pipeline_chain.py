@@ -92,26 +92,21 @@ class TestPipelineChain:
             encoding="utf-8",
         )
 
-        chain_exception: BaseException | None = None
         with (
             patch("app.workers.tasks.translate.get_translation_provider", return_value=provider),  # type: ignore[reportMissingImports]
             patch("subprocess.run", return_value=MagicMock(returncode=0)),
         ):
-            try:
-                result_chain = build_job_chain(pending_job)
-                result_chain.apply()  # Celery eager mode에서 실행
-            except Exception as exc:
-                chain_exception = exc  # 구현 누락 시 — status 확인 후 재평가
+            result_chain = build_job_chain(pending_job)
+            result_chain.apply()  # Celery eager mode에서 실행
 
-        # 체인이 완전히 실행된 경우 최종 상태가 completed여야 한다
         result = await session.execute(
             select(VideoJob).where(VideoJob.id == pending_job)
         )
         job = result.scalar_one_or_none()
-        if job is not None and chain_exception is None:
-            assert job.status == "completed", (
-                f"파이프라인 체인 완료 후 job.status가 'completed'여야 한다, 실제: {job.status}"
-            )
+        assert job is not None
+        assert job.status == "completed", (
+            f"파이프라인 체인 완료 후 job.status가 'completed'여야 한다, 실제: {job.status}"
+        )
 
     async def test_chain_stages_execute_in_order(self, pending_job: str) -> None:
         """체인이 download → extract → translate → render 순서로 실행되어야 한다."""
@@ -139,18 +134,13 @@ class TestPipelineChain:
             patch("app.workers.tasks.translate.translate_task", side_effect=fake_translate),  # type: ignore[reportMissingImports]
             patch("app.workers.tasks.render.render_task", side_effect=fake_render),  # type: ignore[reportMissingImports]
         ):
-            try:
-                result_chain = build_job_chain(pending_job)
-                result_chain.apply()
-            except Exception:
-                pass
+            result_chain = build_job_chain(pending_job)
+            result_chain.apply()
 
-        if len(stage_order) >= 2:
-            expected_order = ["download", "extract", "translate", "render"]
-            for i, stage in enumerate(stage_order):
-                assert stage == expected_order[i], (
-                    f"단계 순서 오류: {stage_order} (예상: {expected_order[:len(stage_order)]})"
-                )
+        expected_order = ["download", "extract", "translate", "render"]
+        assert stage_order == expected_order, (
+            f"단계 순서 오류: {stage_order} (예상: {expected_order})"
+        )
 
     async def test_completed_job_has_assets(self, pending_job: str, db_session: object) -> None:  # type: ignore[type-arg]
         """파이프라인 완료 후 VideoAsset 행이 존재해야 한다."""
@@ -165,17 +155,14 @@ class TestPipelineChain:
         with patch(
             "app.workers.tasks.translate.get_translation_provider", return_value=provider  # type: ignore[reportMissingImports]
         ):
-            try:
-                result_chain = build_job_chain(pending_job)
-                result_chain.apply()
-            except Exception:
-                pass
+            result_chain = build_job_chain(pending_job)
+            result_chain.apply()
 
         result = await session.execute(
             select(VideoAsset).where(VideoAsset.job_id == pending_job)
         )
         assets = result.scalars().all()
-        # 파이프라인이 완전히 실행된 경우에만 검증
-        if assets:
-            kinds = {a.kind for a in assets}
-            assert "dual_srt" in kinds or "dual_vtt" in kinds or "video_mp4" in kinds
+        kinds = {a.kind for a in assets}
+        assert "dual_srt" in kinds or "dual_vtt" in kinds or "video_mp4" in kinds, (
+            f"파이프라인 완료 후 VideoAsset 행이 없거나 예상된 kind가 없다, 실제: {kinds}"
+        )

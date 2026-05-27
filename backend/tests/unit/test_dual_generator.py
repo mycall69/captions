@@ -17,6 +17,8 @@ pytest.importorskip(
     reason="awaiting Phase 3b implementation — app.domain.subtitles.dual_generator",
 )
 
+from collections.abc import Callable  # noqa: E402
+
 from app.domain.subtitles.dual_generator import (  # noqa: E402  # type: ignore[reportMissingImports]
     generate_dual_srt,
     generate_dual_vtt,
@@ -41,6 +43,26 @@ def _make_translated_cues() -> list[ChunkCue]:
     ]
 
 
+@pytest.mark.parametrize(
+    ("generate_fn", "format_name"),
+    [
+        (generate_dual_srt, "srt"),
+        (generate_dual_vtt, "vtt"),
+    ],
+)
+def test_source_first_order(
+    generate_fn: Callable[..., str], format_name: str
+) -> None:
+    """source-first: 원문이 번역문보다 앞에 위치해야 한다 (SRT 및 VTT 공통)."""
+    src = _make_source_cues()
+    tgt = _make_translated_cues()
+    output = generate_fn(src, tgt, order="source-first")
+    ja_pos = output.find("こんにちは")
+    ko_pos = output.find("안녕하세요")
+    assert ja_pos != -1 and ko_pos != -1, f"{format_name}: 일본어/한국어 텍스트를 찾을 수 없다"
+    assert ja_pos < ko_pos, f"{format_name} source-first: 원문이 번역문보다 뒤에 위치한다"
+
+
 class TestGenerateDualSrt:
     """SRT 형식 dual subtitle 생성 검증."""
 
@@ -60,16 +82,6 @@ class TestGenerateDualSrt:
         srt = generate_dual_srt(src, tgt, order="source-first")
         # SRT 표준: 00:00:01,000 --> 00:00:04,000
         assert ",000 -->" in srt
-
-    def test_srt_source_first_order(self) -> None:
-        """source-first: 원문이 번역문보다 앞에 위치해야 한다."""
-        src = _make_source_cues()
-        tgt = _make_translated_cues()
-        srt = generate_dual_srt(src, tgt, order="source-first")
-        ja_pos = srt.find("こんにちは")
-        ko_pos = srt.find("안녕하세요")
-        assert ja_pos != -1 and ko_pos != -1
-        assert ja_pos < ko_pos
 
     def test_srt_target_first_order(self) -> None:
         """target-first: 번역문이 원문보다 앞에 위치해야 한다."""
@@ -128,16 +140,6 @@ class TestGenerateDualVtt:
         vtt = generate_dual_vtt(src, tgt, order="source-first")
         # VTT 표준: 00:00:01.000 --> 00:00:04.000
         assert ".000 -->" in vtt
-
-    def test_vtt_source_first_order(self) -> None:
-        """source-first: 원문이 번역문보다 앞에 위치해야 한다."""
-        src = _make_source_cues()
-        tgt = _make_translated_cues()
-        vtt = generate_dual_vtt(src, tgt, order="source-first")
-        ja_pos = vtt.find("こんにちは")
-        ko_pos = vtt.find("안녕하세요")
-        assert ja_pos != -1 and ko_pos != -1
-        assert ja_pos < ko_pos
 
     def test_vtt_target_first_order(self) -> None:
         """target-first: 번역문이 원문보다 앞에 위치해야 한다."""

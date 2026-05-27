@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import pytest
 
 # 대상 모듈이 아직 미구현이므로 importorskip으로 수집은 성공시키되 실행은 skip한다.
@@ -24,20 +22,12 @@ app_module = pytest.importorskip(
     reason="awaiting Phase 3h implementation — app.main 라우터 배선",
 )
 
-from httpx import ASGITransport, AsyncClient  # noqa: E402
-
-from app.main import app  # noqa: E402  # type: ignore[reportMissingImports]
+from httpx import AsyncClient  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
 _VALID_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcY"
 _INVALID_URL = "https://not-youtube.com/watch?v=dQw4w9WgXcY"
-
-
-@pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
 
 
 class TestPostJobsSuccess:

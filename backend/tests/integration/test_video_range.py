@@ -3,13 +3,12 @@
 검증 항목:
 - Range 헤더 없음: 200 + 전체 파일
 - Range: bytes=0-1023 → 206 Partial Content + Content-Range 헤더 + 1024바이트
-- Range: bytes=1024- → 206 + 나머지 바이트
+- Range: bytes=1024-{FILE_SIZE-1} → 206 + 나머지 바이트 (닫힌 범위)
 - 정상적인 206 케이스 검증 (416은 openapi.yaml 미정의이므로 제외)
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,22 +23,15 @@ pytest.importorskip(
     reason="awaiting Phase 3h implementation",
 )
 
-from httpx import ASGITransport, AsyncClient  # noqa: E402
+from httpx import AsyncClient  # noqa: E402
 
 from app.core.ids import new_job_id  # noqa: E402
 from app.infrastructure.db.orm import VideoAsset, VideoJob  # noqa: E402
-from app.main import app  # noqa: E402  # type: ignore[reportMissingImports]
 
 pytestmark = pytest.mark.integration
 
 _VALID_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcY"
 _FILE_SIZE = 4096  # bytes
-
-
-@pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
 
 
 @pytest.fixture
@@ -142,7 +134,7 @@ class TestVideoRangeRequest:
     async def test_range_from_1024_returns_remainder(
         self, client: AsyncClient, job_with_video: str
     ) -> None:
-        """Range: bytes=1024- → 남은 3072바이트를 반환해야 한다."""
+        """Range: bytes=1024-{FILE_SIZE-1} → 남은 3072바이트를 반환해야 한다 (닫힌 범위)."""
         resp = await client.get(
             f"/v1/jobs/{job_with_video}/video",
             headers={"Range": f"bytes=1024-{_FILE_SIZE - 1}"},
