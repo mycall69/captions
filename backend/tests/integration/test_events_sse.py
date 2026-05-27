@@ -38,6 +38,8 @@ pytest.importorskip(
 
 from httpx import AsyncClient  # noqa: E402
 
+from app.infrastructure.db.orm import JobEvent  # noqa: E402
+
 pytestmark = pytest.mark.integration
 
 # events.md 가 정의한 5종 이벤트 타입
@@ -95,13 +97,38 @@ async def _read_stream(client: AsyncClient, url: str, *, headers: dict[str, str]
 
 
 @pytest.fixture
-async def in_progress_job_id(client: AsyncClient) -> str:
-    """진행 중 작업을 하나 만들어 job_id 를 반환한다."""
+async def in_progress_job_id(client: AsyncClient, db_session: AsyncSession) -> str:
+    """진행 중 작업을 하나 만들어 job_id 를 반환한다.
+
+    엔드포인트는 ``job.progress`` 를 합성하지 않는다 (events.md §클라이언트 동작).
+    실제 진행률 이벤트는 워커가 단계 진입 시 발행하므로, 컨트랙트 테스트가
+    progress 페이로드를 검증할 수 있도록 fixture 에서 ``job_event`` 한 건을
+    직접 시드한다 — replay 경로(``Last-Event-ID`` 또는 ``client.subscribe`` 시
+    조회)로 SSE 스트림에 노출된다.
+    """
     resp = await client.post(
         "/v1/jobs", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcY"}
     )
     assert resp.status_code in (200, 201)
-    return resp.json()["data"]["id"]  # type: ignore[no-any-return]
+    job_id: str = resp.json()["data"]["id"]
+
+    # ``job.progress`` 한 건 시드 — FR-024 컨트랙트 검증용.
+    db_session.add(
+        JobEvent(
+            job_id=job_id,
+            event_type="job.progress",
+            payload=json.dumps(
+                {
+                    "job_id": job_id,
+                    "event_type": "job.progress",
+                    "status": "pending",
+                    "progress": 0.0,
+                }
+            ),
+        )
+    )
+    await db_session.commit()
+    return job_id
 
 
 class TestSseContentType:
@@ -202,10 +229,15 @@ class TestSseDataPayload:
     ) -> None:
         """`job.progress` payload 는 0~1 범위의 progress 를 포함한다.
 
-        진행률 이벤트는 in-progress 작업에서 최소 1건 발행되어야 한다 (FR-024).
-        fixture 가 이를 보장하지 못하면 회귀이므로 skip 대신 실패시킨다.
+        진행률 이벤트는 워커가 단계 진입 시 발행하므로(events.md §클라이언트 동작),
+        엔드포인트는 합성하지 않는다. fixture 가 시드한 ``job_event`` row 를
+        ``Last-Event-ID=0`` replay 경로로 노출시켜 컨트랙트(FR-024)를 검증한다.
         """
-        raw = await _read_stream(client, f"/v1/jobs/{in_progress_job_id}/events")
+        raw = await _read_stream(
+            client,
+            f"/v1/jobs/{in_progress_job_id}/events",
+            headers={"Last-Event-ID": "0"},
+        )
         progress_frames = [
             f for f in _parse_sse_frames(raw)
             if "_comment" not in f and f.get("event") == "job.progress"

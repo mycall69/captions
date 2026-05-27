@@ -16,12 +16,14 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies import jobs_service
+from app.api.v1.dependencies import SubscribableBus, db_session, event_bus, jobs_service
 from app.api.v1.envelope import success_envelope
 from app.api.v1.schemas.jobs import CreateJobRequest
 from app.core.config import get_settings
 from app.core.exceptions import IllegalStateTransitionError, InvalidInputError
+from app.domain.events.publisher import JobEventPublisher
 from app.domain.jobs.service import JobsService
 from app.domain.jobs.states import TERMINAL_STATUSES
 from app.infrastructure.storage.filesystem import JobStorage
@@ -130,6 +132,8 @@ async def cancel_job(
     job_id: str,
     request: Request,
     service: JobsService = Depends(jobs_service),  # noqa: B008
+    session: AsyncSession = Depends(db_session),  # noqa: B008
+    bus: SubscribableBus = Depends(event_bus),  # noqa: B008
 ) -> dict[str, object]:
     """DELETE /v1/jobs/{job_id} — 진행 중 작업을 취소한다.
 
@@ -138,7 +142,9 @@ async def cancel_job(
     1. 작업 존재 확인 — 없으면 404.
     2. 종결 상태(completed/failed) 작업이면 409 ILLEGAL_STATE.
     3. 그렇지 않으면 ``failed`` 로 전이 + ``error_code=USER_CANCELLED`` 기록.
-    4. ``var/storage/<job_id>/`` 디렉터리를 완전 삭제 (부분 산출물 purge).
+    4. ``job.failed`` SSE 이벤트를 발행한다 (events.md §이벤트 타입 — 클라이언트가
+       종결을 학습하기 위해 필요. Last-Event-ID replay 경로도 포함).
+    5. ``var/storage/<job_id>/`` 디렉터리를 완전 삭제 (부분 산출물 purge).
 
     Celery 작업 ID 는 별도로 보관되지 않으므로 revoke 는 생략한다 — 워커는
     매 단계 진입 시 ``video_job.status`` 를 다시 확인하여 ``failed`` 면 즉시
@@ -171,7 +177,17 @@ async def cancel_job(
         error_message="사용자가 작업을 취소했습니다",
     )
 
-    # 4) 디렉터리 purge — 실패해도 응답은 성공
+    # 4) ``job.failed`` SSE 이벤트 발행 — SSE 구독 중인 클라이언트가 취소를
+    #    즉시 학습하고, 끊긴 클라이언트도 Last-Event-ID replay 로 따라잡을 수 있게 한다.
+    publisher = JobEventPublisher(session=session, bus=bus)
+    await publisher.publish_failed(
+        job_id=job_id,
+        error_stage="user",
+        error_code="USER_CANCELLED",
+        error_message="사용자가 작업을 취소했습니다",
+    )
+
+    # 5) 디렉터리 purge — 실패해도 응답은 성공
     _purge_job_storage(job_id)
 
     logger.info("job.cancelled", extra={"job_id": job_id})

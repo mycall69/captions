@@ -4,8 +4,9 @@ contracts/events.md 가 정의한 5종 이벤트 스트림을 클라이언트에
 
 핵심 동작:
 
-1. 연결 직후 현재 작업 상태를 한 번 합성해 push 한다 (``job.state_changed`` +
-   ``job.progress``=0.0). events.md §클라이언트 동작 + spec FR-024.
+1. 연결 직후 현재 작업 상태를 한 번 합성해 push 한다 (``job.state_changed`` 만).
+   events.md §클라이언트 동작 — 진행률은 워커가 단계 진입 시 발행하므로
+   엔드포인트에서 ``job.progress`` 를 합성하지 않는다.
 2. ``Last-Event-ID`` 헤더가 제공되면 ``JobEventRepository.list_after`` 로
    누락분을 오름차순으로 replay 한다 (최대 50건 — events.md §공통 규칙).
 3. 이후 Redis Pub/Sub 채널(``job:{job_id}``) 구독으로 라이브 이벤트를 push 한다.
@@ -31,11 +32,7 @@ from app.api.v1.dependencies import SubscribableBus, db_session, event_bus
 from app.core.exceptions import NotFoundError
 from app.core.ids import new_event_id
 from app.domain.events.bus import job_channel
-from app.domain.events.payloads import (
-    build_progress_event,
-    build_state_changed_event,
-)
-from app.domain.jobs.states import TERMINAL_STATUSES
+from app.domain.events.payloads import build_state_changed_event
 from app.infrastructure.db.repositories.event_repository import (
     DEFAULT_REPLAY_LIMIT,
     JobEventRepository,
@@ -132,29 +129,22 @@ async def stream_job_events(
     # 3) 합성 frame 생성 (연결 직후 push) — replay 가 없을 때만 적용
     #    Last-Event-ID 재연결 시에는 합성 state_changed 가 중복으로 보일 수 있으므로
     #    replay 이후 라이브 스트림 흐름을 유지한다.
+    #
+    #    seq=0 은 연결 시점 합성 sentinel 로 예약되어 있다 — 실제 ``job_event.id`` 는
+    #    1 부터 시작(autoincrement)하므로 어떤 실제 이벤트와도 겹치지 않으며,
+    #    Last-Event-ID 기반 replay 의 비교(``id > after_seq``) 대상에서 자연히 제외된다.
     synthesized: list[dict[str, Any]] = []
     if after_seq is None:
         status_value = job.status.value
         synthesized.append(
             build_state_changed_event(
                 job_id=job_id,
-                seq=0,  # 합성 이벤트 — replay 대상이 아님
+                seq=0,  # 합성 sentinel — 실제 job_event.id (1+) 와 겹치지 않는다
                 event_id=new_event_id(),
                 previous_status=status_value,
                 new_status=status_value,
             )
         )
-        # 종결 상태(completed/failed) 가 아닌 경우 진행률 0.0 합성 — FR-024
-        if job.status not in TERMINAL_STATUSES:
-            synthesized.append(
-                build_progress_event(
-                    job_id=job_id,
-                    seq=0,
-                    event_id=new_event_id(),
-                    status=status_value,
-                    progress=0.0,
-                )
-            )
 
     channel = job_channel(job_id)
 

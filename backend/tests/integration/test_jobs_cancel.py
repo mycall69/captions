@@ -17,12 +17,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 pytest.importorskip(
     "app.api.v1.routes.jobs",
@@ -49,11 +51,13 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from app.api.v1.dependencies import db_session as _real_db_session  # noqa: E402
+from app.api.v1.dependencies import event_bus as _real_event_bus  # noqa: E402
 from app.api.v1.dependencies import jobs_service as _real_jobs_service  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.domain.jobs.models import VideoMetadata  # noqa: E402
 from app.domain.jobs.service import JobsService  # noqa: E402
 from app.domain.jobs.states import JobStatus  # noqa: E402
+from app.infrastructure.db.orm import JobEvent  # noqa: E402
 from app.infrastructure.db.repositories.job_repository import SqlJobRepository  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
 
@@ -104,8 +108,17 @@ async def cancel_client(
             metadata_fetcher=_fake_fetch_metadata,
         )
 
+    # 취소 시 ``job.failed`` 를 publish 하므로 Redis 호출을 피하기 위해 no-op bus 주입.
+    class _NoopBus:
+        async def publish(self, channel: str, payload: dict[str, Any]) -> None:  # noqa: ARG002
+            return None
+
+    def _override_event_bus() -> object:
+        return _NoopBus()
+
     fastapi_app.dependency_overrides[_real_db_session] = _override_db
     fastapi_app.dependency_overrides[_real_jobs_service] = _override_jobs_service
+    fastapi_app.dependency_overrides[_real_event_bus] = _override_event_bus
 
     try:
         async with AsyncClient(
@@ -291,3 +304,41 @@ class TestCancelPurgesJobStorage:
         assert not job_dir.exists(), (
             f"취소 후에도 디렉터리가 남아 있습니다: {job_dir}"
         )
+
+
+# ── 5. 취소 시 job.failed 이벤트 발행 ────────────────────────────────────────
+
+
+class TestCancelPublishesFailedEvent:
+    """취소 확정 후 ``job.failed`` SSE 이벤트가 발행되어야 한다.
+
+    events.md §이벤트 타입 + Last-Event-ID replay 경로로 클라이언트가 종결을
+    학습하기 위해 필요하다 (SSE 구독 중이지 않더라도 재연결 시 따라잡을 수 있어야 함).
+    """
+
+    async def test_cancel_writes_job_failed_event_with_user_cancelled(
+        self,
+        cancel_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """DELETE 후 ``job_event`` 테이블에 ``job.failed`` row 가 기록되며,
+        payload 의 ``error_code`` 는 ``USER_CANCELLED`` 다.
+        """
+        job_id = await _create_job(cancel_client)
+
+        resp = await cancel_client.delete(f"/v1/jobs/{job_id}")
+        assert resp.status_code == 200, resp.text
+
+        # job_event 테이블에서 해당 job 의 job.failed row 를 조회한다.
+        stmt = (
+            select(JobEvent)
+            .where(JobEvent.job_id == job_id, JobEvent.event_type == "job.failed")
+            .order_by(JobEvent.id.asc())
+        )
+        rows = (await db_session.execute(stmt)).scalars().all()
+        assert rows, "취소 후 job.failed 이벤트가 기록되지 않았습니다."
+
+        payload = json.loads(rows[-1].payload)
+        assert payload.get("error_code") == "USER_CANCELLED"
+        assert payload.get("error_stage") == "user"
+        assert payload.get("job_id") == job_id
