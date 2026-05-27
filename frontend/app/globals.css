@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 4%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 6% 10%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 221 83% 53%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
+    --radius: 0.5rem;
+  }
+  .dark {
+    /* 헌법/와이어프레임 §전역원칙 — 다크 우선 #0B0B0F */
+    --background: 240 9% 5%;
+    --foreground: 0 0% 95%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 95%;
+    --destructive: 0 73% 56%;
+    --destructive-foreground: 0 0% 98%;
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 95%;
+    --border: 240 4% 18%;
+    --input: 240 4% 18%;
+    --ring: 217 91% 60%;
+    --card: 240 8% 8%;
+    --card-foreground: 0 0% 95%;
+  }
+  html {
+    @apply bg-background text-foreground;
+  }
+  body {
+    @apply min-h-screen antialiased;
+  }
+}
