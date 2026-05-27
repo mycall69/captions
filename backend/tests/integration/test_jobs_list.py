@@ -157,23 +157,12 @@ class TestListJobsStatusFilter:
         # 2건 생성 — 모두 pending 상태로 시작
         ids = await _create_jobs(client, 2)
 
-        # 두 작업 중 하나를 failed 로 직접 전이 (repository 경유)
+        # 두 작업 중 하나를 failed 로 전이 — cancel 엔드포인트를 활용한다(서비스 경로 보존).
         from app.domain.jobs.states import JobStatus
-        from app.infrastructure.db.repositories.job_repository import SqlJobRepository
 
-        async def _mark_first_failed() -> None:
-            # client fixture 와 동일한 db_session 을 공유하기 위해 dependency
-            # override 가 등록된 fastapi_app 의 jobs_service 를 다시 사용한다.
-            # 여기서는 단순히 client 가 사용하는 in-memory DB 세션을 통해 update.
-            # JobRepository 는 client 내부 dependency_overrides 가 주입한 동일 session 을 쓴다.
-            return None
-
-        # 대신 cancel 엔드포인트를 활용하여 failed 로 만든다 (서비스 경로 보존).
         cancel_resp = await client.delete(f"/v1/jobs/{ids[0]}")
         assert cancel_resp.status_code == 200, cancel_resp.text
         assert cancel_resp.json()["data"]["status"] == JobStatus.failed.value
-        # noqa: F401 — SqlJobRepository import 는 향후 직접 repo 조작용 placeholder.
-        _ = SqlJobRepository
 
         resp = await client.get("/v1/jobs", params={"status": "failed"})
         assert resp.status_code == 200

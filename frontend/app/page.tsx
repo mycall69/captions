@@ -6,7 +6,8 @@
  *
  * - 최대 5건 노출 (`useRecentJobs({ limit: 5 })`)
  * - 빈 결과 → `EmptyState`
- * - "전체 보기" 링크는 MVP 범위 밖 (placeholder anchor)
+ * - 5건일 때 `[ 전체 보기 → ]` CTA 노출 — `/jobs` 인덱스 페이지는 MVP 범위 밖이므로
+ *   disabled 버튼 + 한국어 안내 텍스트로만 노출한다(헌법 V).
  *
  * 헌법 V — 모든 사용자 노출 텍스트는 한국어.
  */
@@ -98,6 +99,25 @@ export default function HomePage() {
               <JobListItem key={job.id} job={job} />
             ))}
           </ul>
+        )}
+
+        {/*
+          와이어프레임 §S1 — 5건이 모두 채워졌을 때만 "전체 보기" CTA 를 노출한다.
+          `/jobs` 인덱스 페이지는 MVP 범위 밖이므로 disabled 버튼으로 노출하고
+          title 속성으로 안내한다.
+        */}
+        {items.length >= 5 && (
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              disabled
+              title="추후 구현 예정"
+              aria-disabled="true"
+              className="text-sm text-muted-foreground opacity-60 cursor-not-allowed"
+            >
+              전체 보기 →
+            </button>
+          </div>
         )}
       </section>
     </div>
