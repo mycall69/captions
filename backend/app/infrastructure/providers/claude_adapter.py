@@ -38,8 +38,8 @@ from app.domain.translation.provider import (
 
 # ── 어조 추론 정규식 ─────────────────────────────────────────────────────────────
 
-_KO_POLITE_RE = re.compile(r"(습니다|입니다|십시오|세요|어요|예요|네요)\b")
-_KO_PLAIN_RE = re.compile(r"(다\.|한다|이다|있다|없다|간다|온다|먹는다)")
+_KO_POLITE_RE = re.compile(r"[가-힣]+니다\b|(십시오|세요|어요|예요|네요)\b")
+_KO_PLAIN_RE = re.compile(r"(한다|이다|있다|없다|간다|온다|먹는다)\b")
 _JA_POLITE_RE = re.compile(r"(です|ます|でした|ました|でしょう|ましょう)")
 _JA_PLAIN_RE = re.compile(r"(だ。|である|だった|していた)")
 
@@ -203,20 +203,23 @@ class ClaudeTranslationAdapter:
 
         cue_lookup = {c.sequence: c for c in chunk.cues}
         out: list[TranslatedCue] = []
-        for item in translated_seq:
-            raw_seq = item["sequence"]
-            seq = int(raw_seq) if isinstance(raw_seq, (int, float, str)) else 0
-            src = cue_lookup.get(seq)
-            if src is None:
-                continue
-            out.append(
-                TranslatedCue(
-                    sequence=seq,
-                    start_ms=src.start_ms,
-                    end_ms=src.end_ms,
-                    text=str(item["text"]),
+        try:
+            for item in translated_seq:
+                raw_seq = item["sequence"]
+                seq = int(raw_seq) if isinstance(raw_seq, (int, float, str)) else 0
+                src = cue_lookup.get(seq)
+                if src is None:
+                    continue
+                out.append(
+                    TranslatedCue(
+                        sequence=seq,
+                        start_ms=src.start_ms,
+                        end_ms=src.end_ms,
+                        text=str(item["text"]),
+                    )
                 )
-            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProviderPermanentError("Malformed translation response") from exc
 
         if len(out) != len(chunk.cues):
             raise ProviderPermanentError(

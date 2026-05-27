@@ -153,7 +153,7 @@ class TestTranslationServiceRetry:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """처음 4번은 실패하고 5번째에 성공하는 경우, 결과를 반환해야 한다."""
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        monkeypatch.setattr("app.domain.translation.service.asyncio.sleep", AsyncMock())
         call_count = 0
 
         class EventuallySuccessProvider:
@@ -179,7 +179,7 @@ class TestTranslationServiceRetry:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """5회 모두 실패 시 마지막 예외가 전파되어야 한다."""
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        monkeypatch.setattr("app.domain.translation.service.asyncio.sleep", AsyncMock())
         provider = RateLimitedTranslationProvider()
         service = TranslationService(provider, cache=None)
 
@@ -193,7 +193,7 @@ class TestTranslationServiceRetry:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """ProviderTransientError 도 재시도 대상이어야 한다."""
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        monkeypatch.setattr("app.domain.translation.service.asyncio.sleep", AsyncMock())
         provider = FailingTranslationProvider()
         service = TranslationService(provider, cache=None)
 
@@ -234,7 +234,7 @@ class TestTranslationServiceRetryDelays:
         async def fake_sleep(delay: float) -> None:
             sleep_calls.append(delay)
 
-        monkeypatch.setattr("asyncio.sleep", fake_sleep)
+        monkeypatch.setattr("app.domain.translation.service.asyncio.sleep", fake_sleep)
         provider = RateLimitedTranslationProvider()
         service = TranslationService(provider, cache=None)
 

@@ -1,11 +1,14 @@
 """app.domain.subtitles.chunking — cue 경계 보존 청크 분할 유틸리티.
 
 test_chunking.py (T047) 가 기대하는 `chunk_cues` 함수를 제공한다.
-내부적으로 app.domain.translation.chunking.split_into_chunks 위에 구현되어
-단일 청크 분할 로직을 재사용한다.
+ChunkCue 목록을 받고 ChunkResult 목록을 반환하는 독립 구현체이므로,
+번역 언어 정보가 없는 컨텍스트(e.g. subtitles 도메인)에서도 호출 가능하다.
 
-인자로 ChunkCue 목록을 받고 ChunkResult 목록을 반환하므로,
-번역 언어 정보가 없는 컨텍스트에서도 호출 가능하다.
+NOTE: 이 모듈은 app.domain.translation.chunking.split_into_chunks 와
+동일한 윈도우 분할 로직을 독립적으로 재구현한다.
+두 구현체의 중복은 향후 리팩토링에서 단일 코어 함수로 통합할 예정이다.
+TODO: translation/chunking.py 와 subtitles/chunking.py 의 윈도우 그룹핑 로직을
+      공통 헬퍼로 추출해 중복을 제거한다 (cross-ref: translation/chunking.py).
 """
 
 from __future__ import annotations

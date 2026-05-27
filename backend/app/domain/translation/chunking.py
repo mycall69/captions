@@ -4,6 +4,10 @@ research.md §5 (chunking policy) 기반 구현.
 - 60초 윈도우 단위로 cue를 그룹화한다 (cue 경계는 자르지 않음).
 - 각 청크에 직전 최대 3 cue / 직후 최대 3 cue를 context로 첨부한다.
 - context cue는 번역 결과에 포함되지 않으며, provider에게 문맥 참고용으로 전달된다.
+
+TODO: 이 모듈의 윈도우 그룹핑 로직이 app.domain.subtitles.chunking.chunk_cues 와
+      중복된다. 향후 리팩토링에서 공통 코어 헬퍼로 통합할 예정이다
+      (cross-ref: subtitles/chunking.py).
 """
 
 from __future__ import annotations
