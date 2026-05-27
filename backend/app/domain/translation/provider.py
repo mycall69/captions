@@ -5,6 +5,11 @@ research.md §6 및 ADR 0001-translation-provider-abstraction.md 준수.
 Anthropic SDK는 infrastructure/providers/claude_adapter.py에만 존재한다.
 
 언어 타입(Lang)은 app.domain.jobs.models가 canonical 정의이며, 여기서 재수출한다.
+
+플랜 문서(plan.md §Translation Pipeline)는 flat 시그니처
+`translate_chunk(source_lang, target_lang, cues, context_before, context_after)`로
+스케치되어 있으나, 실제 구현에서는 동일 필드를 갖는 `TranslationChunk` 값 객체로
+캡슐화한다(인자 폭발 방지·확장성). 의미는 동일하다.
 """
 
 from __future__ import annotations

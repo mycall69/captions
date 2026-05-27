@@ -8,7 +8,7 @@ FastAPI SSE 핸들러가 subscribe()를 소비하고, Celery task가 publish()�
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -56,7 +56,7 @@ class EventBus:
         """
         await self._redis.publish(channel, json.dumps(payload, ensure_ascii=False))
 
-    async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict[str, Any], None]:
         """채널을 구독하고 수신된 JSON dict를 순차로 yield한다.
 
         구독 해제는 호출자가 제너레이터를 종료(aclose 또는 break)함으로써 수행된다.

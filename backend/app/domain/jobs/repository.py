@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from app.domain.jobs.models import VideoJob, VideoMetadata
@@ -55,10 +56,12 @@ class JobRepository(Protocol):
         error_stage: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
+        completed_at: datetime | None = None,
     ) -> VideoJob:
         """작업 상태를 갱신하고 갱신된 도메인 모델을 반환한다.
 
         error_* 인자는 failed 전이 시에만 의미가 있다.
+        completed_at은 종결 상태(completed/failed) 전이 시 설정한다.
         상태 전이 검증은 서비스 계층에서 수행 후 호출해야 한다.
         """
         ...
