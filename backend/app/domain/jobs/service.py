@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 import structlog
 
 from app.core.exceptions import (
-    InvalidInputError,
     NotFoundError,
 )
 from app.core.ids import new_job_id
@@ -22,7 +21,7 @@ from app.core.security import parse_youtube_url
 from app.domain.jobs.models import VideoJob, VideoMetadata
 from app.domain.jobs.repository import JobRepository
 from app.domain.jobs.states import TERMINAL_STATUSES, JobStatus, ensure_transition
-from app.infrastructure.youtube.metadata import VideoTooLongError, fetch_metadata
+from app.infrastructure.youtube.metadata import fetch_metadata
 
 logger = structlog.get_logger(__name__)
 
@@ -68,14 +67,8 @@ class JobsService:
             )
             return existing.model_copy(update={"reused": True})
 
-        # 신규 — 메타데이터 fetch (60분 검증 포함)
-        try:
-            metadata = await self._fetch_metadata(video_id)
-        except VideoTooLongError:
-            # 작업을 생성하지 않고 거절 (DB 미기록)
-            raise
-        except InvalidInputError:
-            raise
+        # 신규 — 메타데이터 fetch (60분 검증 포함; VideoTooLongError가 전파되면 DB 미기록)
+        metadata = await self._fetch_metadata(video_id)
 
         now = datetime.now(UTC)
         job = VideoJob(

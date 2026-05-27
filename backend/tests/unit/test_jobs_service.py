@@ -41,7 +41,7 @@ def _make_job(
     """테스트용 VideoJob을 생성한다."""
     return VideoJob(
         id="01ABCDEFGHJKMNPQRSTVWXYZ12",
-        source_url=f"https://www.youtube.com/watch?v={video_id}",  # type: ignore[arg-type]
+        source_url=f"https://www.youtube.com/watch?v={video_id}",
         youtube_video_id=video_id,
         status=status,
         metadata=_DEFAULT_METADATA,
