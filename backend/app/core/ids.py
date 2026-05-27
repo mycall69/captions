@@ -62,3 +62,12 @@ def new_job_id() -> str:
 def new_request_id() -> str:
     """요청 ID 생성 (ULID 기반)."""
     return new_ulid()
+
+
+def new_event_id() -> str:
+    """이벤트 ID 생성 (ULID 기반).
+
+    SSE payload(`event_id`) 식별자로 사용되며 발행 순서대로 단조 증가한다
+    (events.md §공통 규칙 — Crockford Base32 26자).
+    """
+    return new_ulid()

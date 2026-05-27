@@ -18,7 +18,13 @@ import structlog
 
 from app.infrastructure.storage.filesystem import JobStorage
 from app.workers.celery_app import celery_app
-from app.workers.tasks._runtime import asset_repo, jobs_repo, run_async, task_session
+from app.workers.tasks._runtime import (
+    asset_repo,
+    event_publisher,
+    jobs_repo,
+    run_async,
+    task_session,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -45,10 +51,12 @@ def _run_yt_dlp(
     url = f"https://www.youtube.com/watch?v={youtube_video_id}"
     args: list[str] = [
         yt_dlp,
-        "-f", YTDLP_FORMAT,
+        "-f",
+        YTDLP_FORMAT,
         "--no-playlist",
         "--restrict-filenames",
-        "-o", output_path,
+        "-o",
+        output_path,
         url,
     ]
     result = subprocess.run(args, shell=False, capture_output=True)  # noqa: S603
@@ -60,6 +68,8 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
     """DB 상태 전이 및 자산 등록을 수행한다.
 
     DB 연결 실패 또는 작업 미존재 시 경고 로그만 남기고 계속한다 (멱등성 보장).
+    상태 전이 직후 ``job.state_changed`` 이벤트를, 완료 시 ``job.progress`` (1.0) 이벤트를
+    동일 세션 트랜잭션 안에서 publish 한다 (events.md §백엔드 구현 메모).
     """
     try:
         async with task_session() as session:
@@ -69,10 +79,20 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
             repo = jobs_repo(session)
             assets = asset_repo(session)
             service = JobsService(repo)
+            publisher = event_publisher(session)
 
             # 이미 downloading 이후 상태이면 transition 건너뜀
+            previous_job = await repo.get(job_id)
+            previous_status = previous_job.status if previous_job else None
             with contextlib.suppress(Exception):
                 await service.transition_to(job_id, JobStatus.downloading)
+                if previous_status != JobStatus.downloading:
+                    with contextlib.suppress(Exception):
+                        await publisher.publish_state_changed(
+                            job_id=job_id,
+                            previous_status=previous_status or JobStatus.pending,
+                            new_status=JobStatus.downloading,
+                        )
 
             if output_path.exists():
                 size = output_path.stat().st_size
@@ -83,6 +103,13 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
                         path=str(output_path),
                         mime_type=mimetypes.guess_type("video.mp4")[0] or "video/mp4",
                         byte_size=size,
+                    )
+                with contextlib.suppress(Exception):
+                    await publisher.publish_progress(
+                        job_id=job_id,
+                        status=JobStatus.downloading,
+                        progress=1.0,
+                        detail={"downloaded_bytes": size, "total_bytes": size},
                     )
                 logger.info("worker.download.complete", job_id=job_id, bytes=size)
     except Exception as exc:
@@ -117,6 +144,7 @@ def _execute_sync(job_id: str) -> str:
 
 def _get_video_id_sync(job_id: str) -> str | None:
     """DB에서 youtube_video_id를 조회한다. 실패 시 None 반환."""
+
     async def _query() -> str | None:
         try:
             async with task_session() as session:

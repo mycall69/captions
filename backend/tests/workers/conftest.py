@@ -93,6 +93,27 @@ def _inject_session_factory(db_engine: AsyncEngine) -> Iterator[None]:
         set_session_factory_for_test(None)
 
 
+@pytest.fixture(autouse=True)
+def _inject_event_bus() -> Iterator[None]:
+    """워커 테스트에서 EventBus 를 in-memory stub 으로 교체한다.
+
+    실제 Redis 가 없는 테스트 환경에서도 publisher 호출이 성공하도록 보장한다.
+    이벤트 발행 자체를 검증하는 테스트는 별도 fixture(`fake_event_bus`) 로 fakeredis 를
+    주입하므로 본 stub 은 무해한 기본값으로만 동작한다.
+    """
+    from app.workers.tasks._runtime import set_event_bus_for_test
+
+    class _NoopBus:
+        async def publish(self, channel: str, payload: object) -> None:  # noqa: ARG002
+            return None
+
+    set_event_bus_for_test(_NoopBus())
+    try:
+        yield
+    finally:
+        set_event_bus_for_test(None)
+
+
 @pytest_asyncio.fixture
 async def translate_ready_job(db_session: AsyncSession) -> str:
     """번역 태스크 테스트용 픽스처 — subtitle_processing 상태의 작업 + source 트랙 + cue 30개.

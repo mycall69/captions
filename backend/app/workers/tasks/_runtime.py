@@ -5,6 +5,9 @@
 
 _SESSION_FACTORY_OVERRIDE: 테스트에서 주입용 in-memory 세션 팩토리를 설정할 수 있다.
 None이면 settings.database_url을 사용한 새 엔진으로 세션을 생성한다.
+
+_EVENT_BUS_OVERRIDE: 테스트에서 fakeredis 기반 EventBus 또는 stub 을 주입할 수 있다.
+None 이면 settings.redis_url 로 새 EventBus 를 생성한다 (지연 연결).
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.domain.events.bus import EventBus
+from app.domain.events.publisher import BusLike, JobEventPublisher
 from app.infrastructure.db.repositories.asset_repository import SqlVideoAssetRepository
 from app.infrastructure.db.repositories.job_repository import SqlJobRepository
 from app.infrastructure.db.repositories.subtitle_repository import SqlSubtitleRepository
@@ -27,6 +32,9 @@ _SESSION_FACTORY_OVERRIDE: async_sessionmaker[AsyncSession] | None = None
 
 # 테스트 주입용 단일 세션 override — 팩토리 대신 고정 세션을 재사용할 때 사용
 _SESSION_OVERRIDE: AsyncSession | None = None
+
+# 테스트 주입용 EventBus override — None 이면 settings.redis_url 로 새로 생성
+_EVENT_BUS_OVERRIDE: BusLike | None = None
 
 
 def set_session_factory_for_test(factory: async_sessionmaker[AsyncSession] | None) -> None:
@@ -134,3 +142,29 @@ def subtitle_repo(session: AsyncSession) -> SqlSubtitleRepository:
 def asset_repo(session: AsyncSession) -> SqlVideoAssetRepository:
     """AsyncSession으로 SqlVideoAssetRepository를 생성한다."""
     return SqlVideoAssetRepository(session)
+
+
+def set_event_bus_for_test(bus: BusLike | None) -> None:
+    """테스트에서 EventBus stub 을 주입한다 (None 이면 기본 동작 복원)."""
+    global _EVENT_BUS_OVERRIDE  # noqa: PLW0603
+    _EVENT_BUS_OVERRIDE = bus
+
+
+def _get_event_bus() -> BusLike:
+    """현재 활성 EventBus 를 반환한다.
+
+    테스트 override 가 설정돼 있으면 그 인스턴스를, 아니면 settings.redis_url 로
+    새 EventBus 를 생성한다 (연결은 첫 publish 시 lazy 로 맺어진다).
+    """
+    if _EVENT_BUS_OVERRIDE is not None:
+        return _EVENT_BUS_OVERRIDE
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    return EventBus(redis_url=settings.redis_url)
+
+
+def event_publisher(session: AsyncSession) -> JobEventPublisher:
+    """세션과 EventBus 로 :class:`JobEventPublisher` 를 생성한다."""
+    return JobEventPublisher(session=session, bus=_get_event_bus())

@@ -19,7 +19,13 @@ import structlog
 
 from app.domain.jobs.models import Lang
 from app.workers.celery_app import celery_app
-from app.workers.tasks._runtime import jobs_repo, run_async, subtitle_repo, task_session
+from app.workers.tasks._runtime import (
+    event_publisher,
+    jobs_repo,
+    run_async,
+    subtitle_repo,
+    task_session,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -50,10 +56,13 @@ def download_manual_subtitles(
         yt_dlp,
         "--skip-download",
         "--write-sub",
-        "--sub-langs", sub_langs_arg,
-        "--sub-format", "vtt",
+        "--sub-langs",
+        sub_langs_arg,
+        "--sub-format",
+        "vtt",
         "--no-playlist",
-        "-o", output_template,
+        "-o",
+        output_template,
         url,
     ]
     subprocess.run(args, shell=False, capture_output=True)  # noqa: S603
@@ -90,10 +99,13 @@ def download_auto_subtitles(
         yt_dlp,
         "--skip-download",
         "--write-auto-sub",
-        "--sub-langs", sub_langs_arg,
-        "--sub-format", "vtt",
+        "--sub-langs",
+        sub_langs_arg,
+        "--sub-format",
+        "vtt",
         "--no-playlist",
-        "-o", output_template,
+        "-o",
+        output_template,
         url,
     ]
     subprocess.run(args, shell=False, capture_output=True)  # noqa: S603
@@ -114,7 +126,7 @@ def _detect_lang(file_path: str, video_id: str) -> Lang | None:
     name = Path(file_path).name  # e.g. 'dQw4w9WgXcY.ja.vtt'
     prefix = f"{video_id}."
     if name.startswith(prefix):
-        rest = name[len(prefix):]  # 'ja.vtt'
+        rest = name[len(prefix) :]  # 'ja.vtt'
         lang_part = rest.split(".")[0]
         if lang_part in _SUPPORTED_LANGS:
             return lang_part
@@ -144,6 +156,7 @@ def _execute_subtitles(job_id: str) -> str:
 
     if job_dir is None:
         from app.infrastructure.storage.filesystem import JobStorage
+
         job_dir = JobStorage().job_dir(job_id)
 
     # ─── 단계 2: DB 상태 전이 (best-effort) ──────────────────────────────────
@@ -166,6 +179,15 @@ def _execute_subtitles(job_id: str) -> str:
             output_dir=job_dir,
         )
         subtitle_source = "auto"
+        # 자동 자막 fallback 사용 시 클라이언트에 비차단성 알림 발행
+        with contextlib.suppress(Exception):
+            run_async(
+                _publish_info(
+                    job_id=job_id,
+                    code="AUTO_SUBTITLE_FALLBACK",
+                    message="수동 자막이 없어 자동 자막을 사용합니다.",
+                )
+            )
 
     # ─── 단계 5: 자막 미발견 → failed 전이 ──────────────────────────────────
     if not found_paths:
@@ -183,12 +205,14 @@ def _execute_subtitles(job_id: str) -> str:
 
     # ─── 단계 6: 자막 파싱 + DB 저장 (best-effort) ────────────────────────
     try:
-        run_async(_save_subtitle_track(
-            job_id=job_id,
-            found_paths=found_paths,
-            video_id=video_id,
-            subtitle_source=subtitle_source,
-        ))
+        run_async(
+            _save_subtitle_track(
+                job_id=job_id,
+                found_paths=found_paths,
+                video_id=video_id,
+                subtitle_source=subtitle_source,
+            )
+        )
     except Exception as exc:
         logger.warning("worker.extract.save_track_failed", job_id=job_id, error=str(exc))
 
@@ -202,27 +226,49 @@ async def _get_job_info(job_id: str) -> tuple[str, Path] | None:
         if job is None:
             return None
         from app.infrastructure.storage.filesystem import JobStorage
+
         store = JobStorage()
         return job.youtube_video_id, store.job_dir(job_id)
 
 
+async def _publish_info(*, job_id: str, code: str, message: str) -> None:
+    """``job.info`` 비차단성 알림을 발행한다 (자동 자막 fallback 등)."""
+    async with task_session() as session:
+        publisher = event_publisher(session)
+        with contextlib.suppress(Exception):
+            await publisher.publish_info(job_id=job_id, code=code, message=message)
+
+
 async def _transition_state(job_id: str) -> None:
-    """DB에서 subtitle_processing 상태로 전이한다."""
+    """DB에서 subtitle_processing 상태로 전이하고 SSE 이벤트를 발행한다."""
     async with task_session() as session:
         from app.domain.jobs.service import JobsService
         from app.domain.jobs.states import JobStatus
 
-        service = JobsService(jobs_repo(session))
+        repo = jobs_repo(session)
+        service = JobsService(repo)
+        publisher = event_publisher(session)
+
+        previous_job = await repo.get(job_id)
+        previous_status = previous_job.status if previous_job else JobStatus.downloading
         with contextlib.suppress(Exception):
             await service.transition_to(job_id, JobStatus.subtitle_processing)
+            if previous_status != JobStatus.subtitle_processing:
+                with contextlib.suppress(Exception):
+                    await publisher.publish_state_changed(
+                        job_id=job_id,
+                        previous_status=previous_status,
+                        new_status=JobStatus.subtitle_processing,
+                    )
 
 
 async def _mark_failed(job_id: str, message: str) -> None:
-    """DB에서 작업을 failed 상태로 전이한다."""
+    """DB에서 작업을 failed 상태로 전이하고 ``job.failed`` 이벤트를 발행한다."""
     async with task_session() as session:
         from app.domain.jobs.service import JobsService
 
         service = JobsService(jobs_repo(session))
+        publisher = event_publisher(session)
         with contextlib.suppress(Exception):
             await service.mark_failed(
                 job_id,
@@ -230,6 +276,13 @@ async def _mark_failed(job_id: str, message: str) -> None:
                 error_code="SUBTITLE_NOT_FOUND",
                 error_message=message,
             )
+            with contextlib.suppress(Exception):
+                await publisher.publish_failed(
+                    job_id=job_id,
+                    error_stage="subtitle_processing",
+                    error_code="SUBTITLE_NOT_FOUND",
+                    error_message=message,
+                )
 
 
 async def _save_subtitle_track(
@@ -259,6 +312,7 @@ async def _save_subtitle_track(
     async with task_session() as session:
         srepo = subtitle_repo(session)
         jservice = JobsService(jobs_repo(session))
+        publisher = event_publisher(session)
 
         await jservice.update_languages(job_id, source_lang, target_lang)
 
@@ -274,6 +328,17 @@ async def _save_subtitle_track(
             cues=normalized,
         )
         await srepo.save_track(track)
+
+        # subtitle_processing 단계 종료를 알리는 progress=1.0 이벤트 발행
+        from app.domain.jobs.states import JobStatus
+
+        with contextlib.suppress(Exception):
+            await publisher.publish_progress(
+                job_id=job_id,
+                status=JobStatus.subtitle_processing,
+                progress=1.0,
+                detail={"cue_count": len(normalized)},
+            )
 
     logger.info(
         "worker.extract.complete",

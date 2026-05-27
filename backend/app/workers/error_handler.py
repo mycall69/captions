@@ -13,7 +13,7 @@ from __future__ import annotations
 import structlog
 
 from app.workers.celery_app import celery_app
-from app.workers.tasks._runtime import jobs_repo, run_async, task_session
+from app.workers.tasks._runtime import event_publisher, jobs_repo, run_async, task_session
 
 logger = structlog.get_logger(__name__)
 
@@ -30,18 +30,28 @@ def mark_failed_on_error(
     Celery on_error 콜백으로 등록되며, chain 내 임의 태스크 실패 시 호출된다.
     DB 오류는 경고 로그를 남기고 무시한다 (이 핸들러 자체가 실패하면 안 된다).
     """
+    import contextlib
+
     async def _mark() -> None:
         try:
             async with task_session() as session:
                 from app.domain.jobs.service import JobsService
 
                 service = JobsService(jobs_repo(session))
+                publisher = event_publisher(session)
                 await service.mark_failed(
                     job_id,
                     error_stage="unknown",
                     error_code="PIPELINE_FAILED",
                     error_message=str(exc),
                 )
+                with contextlib.suppress(Exception):
+                    await publisher.publish_failed(
+                        job_id=job_id,
+                        error_stage="unknown",
+                        error_code="PIPELINE_FAILED",
+                        error_message=str(exc),
+                    )
                 logger.warning(
                     "pipeline.failed",
                     job_id=job_id,

@@ -14,7 +14,13 @@ import structlog
 
 from app.domain.translation.provider import TranslationProvider
 from app.workers.celery_app import celery_app
-from app.workers.tasks._runtime import jobs_repo, run_async, subtitle_repo, task_session
+from app.workers.tasks._runtime import (
+    event_publisher,
+    jobs_repo,
+    run_async,
+    subtitle_repo,
+    task_session,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -51,28 +57,51 @@ def update_job_status(job_id: str, status: str, **kwargs: object) -> None:
     """작업 상태를 동기적으로 갱신한다 (retry 소진 후 failed 표시용).
 
     테스트에서 monkeypatch 가능하도록 모듈 수준 함수로 분리한다.
+    상태 갱신과 함께 SSE 이벤트(``job.failed`` / ``job.state_changed``)를 발행한다.
     """
+    import contextlib
+
     async def _update() -> None:
         async with task_session() as session:
             from app.domain.jobs.service import JobsService
             from app.domain.jobs.states import JobStatus
 
             service = JobsService(jobs_repo(session))
+            publisher = event_publisher(session)
             if status == "failed":
+                error_stage = str(kwargs.get("error_stage", "translating"))
+                error_code = str(kwargs.get("error_code", "TRANSLATION_FAILED"))
+                error_message = str(kwargs.get("error_message", "번역 실패"))
                 await service.mark_failed(
                     job_id,
-                    error_stage=str(kwargs.get("error_stage", "translating")),
-                    error_code=str(kwargs.get("error_code", "TRANSLATION_FAILED")),
-                    error_message=str(kwargs.get("error_message", "번역 실패")),
+                    error_stage=error_stage,
+                    error_code=error_code,
+                    error_message=error_message,
                 )
+                with contextlib.suppress(Exception):
+                    await publisher.publish_failed(
+                        job_id=job_id,
+                        error_stage=error_stage,
+                        error_code=error_code,
+                        error_message=error_message,
+                    )
             else:
+                current = await service.get(job_id)
                 await service.transition_to(job_id, JobStatus(status))
+                with contextlib.suppress(Exception):
+                    await publisher.publish_state_changed(
+                        job_id=job_id,
+                        previous_status=current.status,
+                        new_status=JobStatus(status),
+                    )
 
     run_async(_update())
 
 
 async def _execute(job_id: str) -> str:
     """translate_task의 비동기 실행 본체."""
+    import contextlib
+
     async with task_session() as session:
         from app.core.exceptions import InvalidInputError, NotFoundError
         from app.core.ids import new_ulid
@@ -85,10 +114,18 @@ async def _execute(job_id: str) -> str:
         jrepo = jobs_repo(session)
         srepo = subtitle_repo(session)
         service = JobsService(jrepo)
+        publisher = event_publisher(session)
         # 멱등성: 이미 translating 상태이면 transition 건너뜀
         job = await service.get(job_id)
         if job.status != JobStatus.translating:
+            previous_status = job.status
             await service.transition_to(job_id, JobStatus.translating)
+            with contextlib.suppress(Exception):
+                await publisher.publish_state_changed(
+                    job_id=job_id,
+                    previous_status=previous_status,
+                    new_status=JobStatus.translating,
+                )
             job = await service.get(job_id)
 
         source_track = await srepo.get_track(job_id, "source")
@@ -109,8 +146,9 @@ async def _execute(job_id: str) -> str:
         provider = get_translation_provider()
         tservice = TranslationService(provider)
 
+        chunk_total = len(chunks)
         all_translated_cues: list[SubtitleCue] = []
-        for chunk in chunks:
+        for chunk_index, chunk in enumerate(chunks):
             translated_chunk = await tservice.translate(chunk)
             for tcue in translated_chunk.cues:
                 all_translated_cues.append(
@@ -121,6 +159,20 @@ async def _execute(job_id: str) -> str:
                         text=tcue.text,
                     )
                 )
+            # 청크 단위 진행률 publish — chunk_total 이 0 이 아닌 경우에만
+            if chunk_total > 0:
+                completed = chunk_index + 1
+                with contextlib.suppress(Exception):
+                    await publisher.publish_progress(
+                        job_id=job_id,
+                        status=JobStatus.translating,
+                        progress=completed / chunk_total,
+                        detail={
+                            "chunk_index": completed,
+                            "chunk_total": chunk_total,
+                            "retry_count": 0,
+                        },
+                    )
 
         target_track = SubtitleTrack(
             id=new_ulid(),
@@ -169,7 +221,7 @@ def translate_task(self: Any, job_id: str) -> str:
             )
             raise
         try:
-            raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+            raise self.retry(exc=exc, countdown=2**self.request.retries)
         except self.MaxRetriesExceededError:
             # 안전망: 위에서 처리되지 않은 경우 대비
             update_job_status(
