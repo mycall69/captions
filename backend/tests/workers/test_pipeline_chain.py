@@ -9,12 +9,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 pytest.importorskip(
     "app.workers.tasks.download",
@@ -46,8 +46,8 @@ from tests.fixtures.fake_provider import FakeTranslationProvider  # noqa: E402
 pytestmark = pytest.mark.workers
 
 
-@pytest.fixture
-def pending_job(db_session: object) -> str:  # type: ignore[type-arg]
+@pytest_asyncio.fixture
+async def pending_job(db_session: object) -> str:  # type: ignore[type-arg]
     """pending 상태 작업을 DB에 삽입하고 job_id를 반환한다."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,29 +55,31 @@ def pending_job(db_session: object) -> str:  # type: ignore[type-arg]
     job_id = new_job_id()
     now = datetime.now(UTC)
 
-    async def setup() -> None:
-        job = VideoJob(
-            id=job_id,
-            source_url="https://www.youtube.com/watch?v=dQw4w9WgXcY",
-            youtube_video_id="dQw4w9WgXcY",
-            status="pending",
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(job)
-        await session.commit()
+    job = VideoJob(
+        id=job_id,
+        source_url="https://www.youtube.com/watch?v=dQw4w9WgXcY",
+        youtube_video_id="dQw4w9WgXcY",
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(job)
+    await session.commit()
 
-    asyncio.get_event_loop().run_until_complete(setup())
     return job_id
 
 
 class TestPipelineChain:
     """전체 파이프라인 체인 end-to-end 테스트."""
 
-    def test_chain_completes_with_fake_provider(
-        self, pending_job: str, tmp_path: Path
+    async def test_chain_completes_with_fake_provider(
+        self, pending_job: str, tmp_path: Path, db_session: object
     ) -> None:
         """FakeProvider를 사용한 전체 체인이 completed 상태로 종료되어야 한다."""
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        session: AsyncSession = db_session  # type: ignore[assignment]
         provider = FakeTranslationProvider()
 
         # 파일시스템 mock: 각 단계가 실제 파일을 쓰는 것처럼 설정
@@ -90,6 +92,7 @@ class TestPipelineChain:
             encoding="utf-8",
         )
 
+        chain_exception: BaseException | None = None
         with (
             patch("app.workers.tasks.translate.get_translation_provider", return_value=provider),  # type: ignore[reportMissingImports]
             patch("subprocess.run", return_value=MagicMock(returncode=0)),
@@ -97,10 +100,20 @@ class TestPipelineChain:
             try:
                 result_chain = build_job_chain(pending_job)
                 result_chain.apply()  # Celery eager mode에서 실행
-            except Exception:
-                pass  # 구현 누락 시 skip — status 확인이 목적
+            except Exception as exc:
+                chain_exception = exc  # 구현 누락 시 — status 확인 후 재평가
 
-    def test_chain_stages_execute_in_order(self, pending_job: str) -> None:
+        # 체인이 완전히 실행된 경우 최종 상태가 completed여야 한다
+        result = await session.execute(
+            select(VideoJob).where(VideoJob.id == pending_job)
+        )
+        job = result.scalar_one_or_none()
+        if job is not None and chain_exception is None:
+            assert job.status == "completed", (
+                f"파이프라인 체인 완료 후 job.status가 'completed'여야 한다, 실제: {job.status}"
+            )
+
+    async def test_chain_stages_execute_in_order(self, pending_job: str) -> None:
         """체인이 download → extract → translate → render 순서로 실행되어야 한다."""
         stage_order: list[str] = []
 
@@ -139,7 +152,7 @@ class TestPipelineChain:
                     f"단계 순서 오류: {stage_order} (예상: {expected_order[:len(stage_order)]})"
                 )
 
-    def test_completed_job_has_assets(self, pending_job: str, db_session: object) -> None:  # type: ignore[type-arg]
+    async def test_completed_job_has_assets(self, pending_job: str, db_session: object) -> None:  # type: ignore[type-arg]
         """파이프라인 완료 후 VideoAsset 행이 존재해야 한다."""
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
@@ -158,14 +171,11 @@ class TestPipelineChain:
             except Exception:
                 pass
 
-        async def check() -> None:
-            result = await session.execute(
-                select(VideoAsset).where(VideoAsset.job_id == pending_job)
-            )
-            assets = result.scalars().all()
-            # 파이프라인이 완전히 실행된 경우에만 검증
-            if assets:
-                kinds = {a.kind for a in assets}
-                assert "dual_srt" in kinds or "dual_vtt" in kinds or "video_mp4" in kinds
-
-        asyncio.get_event_loop().run_until_complete(check())
+        result = await session.execute(
+            select(VideoAsset).where(VideoAsset.job_id == pending_job)
+        )
+        assets = result.scalars().all()
+        # 파이프라인이 완전히 실행된 경우에만 검증
+        if assets:
+            kinds = {a.kind for a in assets}
+            assert "dual_srt" in kinds or "dual_vtt" in kinds or "video_mp4" in kinds

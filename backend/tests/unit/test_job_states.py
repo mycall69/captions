@@ -53,6 +53,19 @@ ILLEGAL_TRANSITIONS = [
     # 동일 상태 전이
     (JobStatus.pending, JobStatus.pending),
     (JobStatus.downloading, JobStatus.downloading),
+    # 종결 상태에서 중간 상태로의 전이 (terminal outgoing)
+    (JobStatus.completed, JobStatus.subtitle_processing),
+    (JobStatus.completed, JobStatus.translating),
+    (JobStatus.completed, JobStatus.rendering),
+    (JobStatus.failed, JobStatus.subtitle_processing),
+    (JobStatus.failed, JobStatus.translating),
+    (JobStatus.failed, JobStatus.rendering),
+    # 중간 상태 자기 전이 (self-transitions)
+    (JobStatus.subtitle_processing, JobStatus.subtitle_processing),
+    (JobStatus.translating, JobStatus.translating),
+    (JobStatus.rendering, JobStatus.rendering),
+    (JobStatus.completed, JobStatus.completed),
+    (JobStatus.failed, JobStatus.failed),
 ]
 
 

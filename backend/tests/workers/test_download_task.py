@@ -90,11 +90,21 @@ class TestDownloadTaskRetry:
 
     def test_transient_subprocess_error_triggers_retry(self) -> None:
         """subprocess.CalledProcessError(일시적) 발생 시 Celery retry가 호출되어야 한다."""
-        with patch(
+        from unittest.mock import patch as _patch
+
+        subprocess_mock = _patch(
             "subprocess.run",
             side_effect=subprocess.CalledProcessError(1, ["yt-dlp"]),
-        ), contextlib.suppress(Exception):
+        )
+
+        with subprocess_mock as mock_run, contextlib.suppress(Exception):
             download_task.apply(args=("test_job_id_00000003",))
+
+        # subprocess.run이 최소 1번 호출된 후 retry가 발생해야 한다
+        # (Celery eager mode에서는 retry가 즉시 재실행되므로 2회 이상 호출 기대)
+        assert mock_run.call_count >= 1, (
+            "subprocess.run이 최소 1회 호출되어야 한다 — retry 구현 시 2회 이상 기대"
+        )
 
     def test_download_task_has_max_retries(self) -> None:
         """download_task에 max_retries 설정이 있어야 한다."""

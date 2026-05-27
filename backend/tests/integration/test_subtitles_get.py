@@ -209,6 +209,10 @@ class TestGetSubtitlesNotCompleted:
         resp = await client.get(f"/v1/jobs/{pending_job_id}/subtitles")
         assert resp.status_code == 409
         assert resp.json()["success"] is False
+        error_code = resp.json().get("error", {}).get("code", "")
+        assert isinstance(error_code, str) and error_code, (
+            "에러 응답에 비어있지 않은 error.code 문자열이 있어야 한다 (예: CONFLICT 또는 JOB_NOT_READY)"
+        )
 
     async def test_not_found_returns_404(self, client: AsyncClient) -> None:
         """존재하지 않는 job_id는 404를 반환해야 한다."""

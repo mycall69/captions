@@ -47,3 +47,16 @@ class FailingTranslationProvider:
 
         self.call_count += 1
         raise ProviderTransientError("test transient")
+
+
+class RateLimitedTranslationProvider:
+    """항상 ProviderRateLimitError를 발생시키는 mock — rate-limit retry 테스트용."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def translate_chunk(self, chunk: TranslationChunk) -> TranslatedChunk:  # noqa: ARG002
+        from app.domain.translation.provider import ProviderRateLimitError
+
+        self.call_count += 1
+        raise ProviderRateLimitError("test rate limit")

@@ -17,7 +17,7 @@ pytest.importorskip(
     reason="awaiting Phase 3b implementation — app.workers.tasks.extract_subtitles",
 )
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from app.workers.tasks.extract_subtitles import (
     extract_subtitles_task,  # noqa: E402  # type: ignore[reportMissingImports]
@@ -125,11 +125,9 @@ class TestExtractSubtitlesFallback:
 class TestExtractSubtitlesFailure:
     """FR-009, FR-011: ko/ja 자막 미발견 시 failed 전이."""
 
-    def test_no_ko_ja_subtitle_marks_job_failed(self, db_session: object) -> None:  # type: ignore[type-arg]
+    async def test_no_ko_ja_subtitle_marks_job_failed(self, db_session: object) -> None:  # type: ignore[type-arg]
         """ko/ja 자막이 모두 없으면 작업이 failed 상태 + SUBTITLE_NOT_FOUND가 되어야 한다."""
-        import asyncio
-        from datetime import datetime
-
+        from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession
 
         from app.core.ids import new_job_id
@@ -139,19 +137,16 @@ class TestExtractSubtitlesFailure:
         job_id = new_job_id()
         now = datetime.now(UTC)
 
-        async def setup() -> None:
-            job = VideoJob(
-                id=job_id,
-                source_url="https://www.youtube.com/watch?v=dQw4w9WgXcY",
-                youtube_video_id="dQw4w9WgXcY",
-                status="downloading",
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(job)
-            await session.commit()
-
-        asyncio.get_event_loop().run_until_complete(setup())
+        job = VideoJob(
+            id=job_id,
+            source_url="https://www.youtube.com/watch?v=dQw4w9WgXcY",
+            youtube_video_id="dQw4w9WgXcY",
+            status="downloading",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(job)
+        await session.commit()
 
         def fake_download_manual(*_a: object, **_kw: object) -> list[str]:
             return []
@@ -174,14 +169,10 @@ class TestExtractSubtitlesFailure:
             except Exception:
                 pass
 
-        async def check() -> None:
-            from sqlalchemy import select
-            result = await session.execute(
-                select(VideoJob).where(VideoJob.id == job_id)
-            )
-            job = result.scalar_one_or_none()
-            if job is not None:
-                assert job.status == "failed"
-                assert job.error_code == "SUBTITLE_NOT_FOUND"
-
-        asyncio.get_event_loop().run_until_complete(check())
+        result = await session.execute(
+            select(VideoJob).where(VideoJob.id == job_id)
+        )
+        db_job = result.scalar_one_or_none()
+        if db_job is not None:
+            assert db_job.status == "failed"
+            assert db_job.error_code == "SUBTITLE_NOT_FOUND"

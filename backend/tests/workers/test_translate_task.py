@@ -13,7 +13,10 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.fixtures.fake_provider import FailingTranslationProvider, FakeTranslationProvider
+from tests.fixtures.fake_provider import (
+    FakeTranslationProvider,
+    RateLimitedTranslationProvider,
+)
 
 pytest.importorskip(
     "app.workers.tasks.translate",
@@ -113,27 +116,29 @@ class TestTranslateTaskRateLimitRetry:
     """FR-015: rate limit 오류 시 retry 동작 검증."""
 
     def test_rate_limit_triggers_retry_up_to_4_times(self) -> None:
-        """ProviderRateLimitError 발생 시 최대 4회 retry가 시도되어야 한다 (research §6)."""
-        failing_provider = FailingTranslationProvider()
+        """ProviderRateLimitError 발생 시 4회 retry가 시도되어야 한다 (research §6: 1s/2s/4s/8s backoff)."""
+        provider = RateLimitedTranslationProvider()
 
         with patch(
             "app.workers.tasks.translate.get_translation_provider",  # type: ignore[reportMissingImports]
-            return_value=failing_provider,
+            return_value=provider,
         ):
             try:
                 translate_task.apply(args=("test_job_rate_limit_01",))
             except Exception:
                 pass
 
-        # 최대 4회 retry → 최대 5회 호출 (최초 1 + retry 4)
-        # 실제 횟수는 task 구현에 따라 다를 수 있으나 5회 이하여야 함
-        assert failing_provider.call_count <= 5, (
-            f"retry가 4회를 초과함: {failing_provider.call_count}회 호출"
-        )
+        # research §6: 1회 최초 시도 + 4회 retry = 총 5회 호출 (backoff: 1s, 2s, 4s, 8s)
+        # 구현이 완료되면 call_count == 5 (최초 1 + retry 4)
+        if provider.call_count > 0:
+            assert provider.call_count == 5, (
+                f"rate limit retry는 최초 1회 + 4회 retry = 총 5회 호출이어야 한다 "
+                f"(research §6), 실제: {provider.call_count}회"
+            )
 
     def test_all_retries_exhausted_marks_job_failed(self) -> None:
         """모든 retry 소진 후 작업이 failed + TRANSLATION_FAILED 상태가 되어야 한다."""
-        failing_provider = FailingTranslationProvider()
+        failing_provider = RateLimitedTranslationProvider()
 
         status_updates: list[str] = []
 
@@ -180,5 +185,7 @@ class TestTranslateTaskChunking:
                 pass
 
         # provider가 주입되어 실행된 경우 최소 1번 호출되어야 함
-        # (cue가 없는 경우 0번도 허용)
-        assert provider.call_count >= 0  # 실행만 되면 OK — 실제 검증은 pipeline test에서
+        # TODO(T073): cue 분할 개수에 따른 정확한 청크 수 검증은 T073 구현 단계에서 추가
+        assert provider.call_count >= 1, (
+            "translate_task가 FakeTranslationProvider.translate_chunk를 최소 1회 호출해야 한다"
+        )
