@@ -26,7 +26,7 @@ pytest.importorskip(
 from httpx import AsyncClient  # noqa: E402
 
 from app.core.ids import new_job_id  # noqa: E402
-from app.infrastructure.db.orm import VideoAsset, VideoJob  # noqa: E402
+from app.infrastructure.db.orm import SubtitleCue, SubtitleTrack, VideoAsset, VideoJob  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +54,11 @@ _SAMPLE_SRT_TARGET_FIRST = """\
 async def completed_job_with_assets(
     db_session: object, tmp_path: Path  # type: ignore[type-arg]
 ) -> str:
-    """completed 작업 + dual_srt / dual_vtt VideoAsset을 DB에 삽입한다."""
+    """completed 작업 + dual_srt / dual_vtt VideoAsset + source/translated 자막 트랙을 DB에 삽입한다.
+
+    T039 조정: download 엔드포인트는 SubtitlesService.build_dual_subtitle()로
+    자막 트랙에서 파일을 동적 생성하므로 subtitle_track / subtitle_cue 행도 함께 삽입한다.
+    """
     from sqlalchemy.ext.asyncio import AsyncSession
 
     session: AsyncSession = db_session  # type: ignore[assignment]
@@ -76,7 +80,49 @@ async def completed_job_with_assets(
     session.add(job)
     await session.flush()
 
-    # 실제 파일 생성 (tmp_path 하위)
+    # 자막 트랙 + 큐 삽입 (download 엔드포인트가 참조)
+    src_track_id = new_job_id()
+    tgt_track_id = new_job_id()
+    src_track = SubtitleTrack(
+        id=src_track_id,
+        job_id=job_id,
+        kind="source",
+        language="ja",
+        origin="manual",
+        source_format="srt",
+        cue_count=1,
+        created_at=now,
+    )
+    tgt_track = SubtitleTrack(
+        id=tgt_track_id,
+        job_id=job_id,
+        kind="translated",
+        language="ko",
+        origin="generated",
+        cue_count=1,
+        created_at=now,
+    )
+    session.add(src_track)
+    session.add(tgt_track)
+    await session.flush()
+
+    session.add(SubtitleCue(
+        track_id=src_track_id,
+        sequence=1,
+        start_ms=1000,
+        end_ms=4000,
+        text="こんにちは、世界。",
+    ))
+    session.add(SubtitleCue(
+        track_id=tgt_track_id,
+        sequence=1,
+        start_ms=1000,
+        end_ms=4000,
+        text="안녕하세요, 세계.",
+    ))
+    await session.flush()
+
+    # 사전 생성 파일 자산 (레거시 호환 — 현재 엔드포인트에서는 미사용)
     srt_path = tmp_path / "dual.srt"
     vtt_path = tmp_path / "dual.vtt"
     srt_path.write_text(_SAMPLE_SRT_SOURCE_FIRST, encoding="utf-8")

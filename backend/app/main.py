@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRouter
 
 from app.api.v1.middleware.request_id import RequestIdMiddleware
 from app.core.config import get_settings
@@ -55,9 +56,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # /v1 라우터 마운트는 T082에서 수행 (다음 Phase)
-    # from app.api.v1.router import router as v1_router
-    # app.include_router(v1_router, prefix="/v1")
+    # T082: /v1 라우터 마운트 — jobs, subtitles, media 라우터를 /v1 접두사로 등록
+    from app.api.v1.routes import jobs, media, subtitles
+
+    api_v1_router = APIRouter(prefix="/v1")
+    api_v1_router.include_router(jobs.router, tags=["jobs"])
+    api_v1_router.include_router(subtitles.router, tags=["subtitles"])
+    api_v1_router.include_router(media.router, tags=["media"])
+    app.include_router(api_v1_router)
 
     return app
 

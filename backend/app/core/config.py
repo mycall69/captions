@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # 환경변수가 1 미만이면 1로 클램프
     job_concurrency: int = Field(default=2, ge=1)
 
+    # ── 테스트 / 개발 전용 ─────────────────────────────────────────────────────
+    # True이면 POST /v1/jobs에서 Celery chain 디스패치를 건너뛴다 (테스트 격리용)
+    disable_chain_dispatch: bool = False
+
     @field_validator("job_concurrency", mode="before")
     @classmethod
     def _clamp(cls, v: object) -> int:
