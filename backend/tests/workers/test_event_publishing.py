@@ -202,8 +202,10 @@ class TestPublishAtomicity:
                 new_status=JobStatus.downloading,
             )
 
-        # 새 세션으로 다시 조회하지 않더라도 동일 세션에서 rollback 되어야 함.
-        await db_session.rollback()
+        # 테스트가 임의로 rollback 하면 publisher 의 원자성 보장이 가려진다.
+        # 동일 세션의 in-flight 객체 캐시를 비우고, 커밋된 상태만 다시 조회한다.
+        # publisher 가 실패 시 자체 롤백을 수행했다면 row 가 남아 있지 않아야 한다.
+        db_session.expire_all()
         rows = (
             await db_session.execute(
                 select(JobEvent).where(JobEvent.job_id == seeded_job)
@@ -300,6 +302,10 @@ class TestEventIdMonotonicity:
         except TimeoutError:
             task.cancel()
 
+        # 3건 모두 수신해야 단조성 검증이 의미를 가진다. (0~1건이면 trivial pass)
+        assert len(received) == 3, (
+            f"3건 publish 후 수신된 이벤트가 {len(received)}건 — 단조성 검증 불가"
+        )
         ids = [m["event_id"] for m in received]
         assert ids == sorted(ids), f"event_id 가 단조 증가하지 않음: {ids}"
 
@@ -353,6 +359,10 @@ class TestSeqMonotonicity:
         except TimeoutError:
             task.cancel()
 
+        # 3건 모두 수신해야 단조성 검증이 의미를 가진다. (0~1건이면 trivial pass)
+        assert len(received) == 3, (
+            f"3건 publish 후 수신된 이벤트가 {len(received)}건 — 단조성 검증 불가"
+        )
         seqs = [int(m["seq"]) for m in received]
         assert seqs == sorted(seqs)
         # seq 사이 간격이 1 이라는 사양은 events.md 에 명시되지 않았으나, 단조성은 필수.

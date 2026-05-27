@@ -157,14 +157,17 @@ describe.skipIf(componentMissing)('StageProgressBar', () => {
         nodes[i];
       const dataState = node.getAttribute('data-state') ?? '';
       const className = node.className ?? '';
-      // done / current 모두 아니어야 함
+      // done / current 모두 아니어야 함.
+      // 주의: `\b(done|complete|current|active)\b` 같은 광역 regex 는
+      // `stage-completed` (literal "completed" 단계의 클래스) 와 충돌하므로
+      // state 접두사(`state-*`) 가 붙은 형태 또는 data-state 속성으로만 판정한다.
       const isFutureOrUpcoming =
         dataState === 'upcoming' ||
         dataState === 'pending' ||
         dataState === 'future' ||
         dataState === '' || // class 기반일 수 있음
         /\b(upcoming|future|pending)\b/i.test(className) ||
-        !/\b(done|complete|current|active)\b/i.test(className);
+        !/\b(state-(done|complete|current|active))\b/i.test(className);
       expect(isFutureOrUpcoming).toBe(true);
     }
   });

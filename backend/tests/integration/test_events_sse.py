@@ -24,6 +24,7 @@ import re
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # T101 SSE 라우터 구현 전까지 import skip 으로 RED 상태 유지
 pytest.importorskip(
@@ -239,19 +240,65 @@ class TestSseLastEventIdReplay:
             )
 
     async def test_replay_is_limited_to_50_events(
-        self, client: AsyncClient, in_progress_job_id: str
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        in_progress_job_id: str,
     ) -> None:
-        """replay 한도는 50건이다 — Last-Event-ID=0 으로 재연결 시 50건 초과 replay 금지."""
+        """replay 한도는 50건이다 — Last-Event-ID=0 으로 재연결 시 50건 초과 replay 금지.
+
+        events.md §공통 규칙 "replay 한도 50건" 을 강제로 검증하기 위해
+        DB 에 60건의 `job_event` 를 직접 시드한 뒤 Last-Event-ID=0 으로 재연결한다.
+        구현이 51건 이상 replay 하면 어떤 카운트(60, 199, ...) 든 실패해야 한다.
+        """
+        try:
+            from app.infrastructure.db.orm import JobEvent
+        except ImportError:
+            pytest.skip("JobEvent ORM 미구현 — replay 캡 검증 보류")
+
+        # 1) 60건의 prior event 를 동일 job_id 로 시드한다.
+        for i in range(1, 61):
+            db_session.add(
+                JobEvent(
+                    job_id=in_progress_job_id,
+                    event_type="job.progress",
+                    payload=json.dumps(
+                        {
+                            "job_id": in_progress_job_id,
+                            "seq": i,
+                            "progress": i / 100.0,
+                        }
+                    ),
+                )
+            )
+        await db_session.commit()
+
+        # 2) Last-Event-ID=0 재연결 → replay 만 분리해 카운트한다.
+        # `id:` 필드가 시드된 row id (정수) 인 프레임이 replay 프레임.
+        # live (Redis pub/sub) 이벤트가 끼어드는 것을 막기 위해 한 번에 작게 읽고
+        # 즉시 스트림을 끊는다. 그래도 keepalive 코멘트가 섞일 수 있으므로
+        # `_comment` 프레임은 제외한다.
         raw = await _read_stream(
             client,
             f"/v1/jobs/{in_progress_job_id}/events",
             headers={"Last-Event-ID": "0"},
             max_bytes=64_000,
         )
-        frames = [f for f in _parse_sse_frames(raw) if "_comment" not in f]
-        # live 이벤트가 추가로 섞일 수 있으므로 replay 자체는 50건을 넘어선 안 됨.
-        # 정확 카운트는 구현에서 분리되지만 sanity-check 으로 200건 이하인지 확인한다.
-        assert len(frames) <= 200, "replay 한도 초과로 추정되는 비정상 응답"
+        all_frames = [f for f in _parse_sse_frames(raw) if "_comment" not in f]
+
+        # replay 프레임만 식별: id 가 정수이며 시드한 60건의 id 범위 내인 프레임.
+        # (라이브 합성 이벤트의 id 는 ULID/타임스탬프 기반으로 정수가 아닐 수 있음)
+        replay_frames: list[dict[str, str]] = []
+        for f in all_frames:
+            fid = f.get("id", "")
+            if fid.isdigit():
+                replay_frames.append(f)
+
+        assert len(replay_frames) <= 50, (
+            f"replay 한도(50) 초과: 시드 60건 중 {len(replay_frames)} 건이 replay 됨"
+        )
+        # 60건 시드 → 캡이 동작했다면 정확히 50건, 동작하지 않으면 51+ 건.
+        # 51건 이상이 와도 위 assertion 이 실패한다.
 
 
 class TestSseKeepalive:
