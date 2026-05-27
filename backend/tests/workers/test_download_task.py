@@ -96,8 +96,14 @@ class TestDownloadTaskRetry:
             "subprocess.run",
             side_effect=subprocess.CalledProcessError(1, ["yt-dlp"]),
         )
+        # shutil.which가 None을 반환하면 subprocess.run에 도달하기 전에 에러가 발생하므로
+        # 함께 패치하여 yt-dlp가 설치된 것처럼 설정한다
+        which_mock = _patch(
+            "app.workers.tasks.download.shutil.which",
+            return_value="/usr/local/bin/yt-dlp",
+        )
 
-        with subprocess_mock as mock_run, contextlib.suppress(Exception):
+        with subprocess_mock as mock_run, which_mock, contextlib.suppress(Exception):
             download_task.apply(args=("test_job_id_00000003",))
 
         # subprocess.run이 최소 1번 호출된 후 retry가 발생해야 한다

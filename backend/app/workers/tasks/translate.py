@@ -146,6 +146,7 @@ async def _execute(job_id: str) -> str:
 @celery_app.task(
     bind=True,
     name="app.workers.tasks.translate.translate_task",
+    max_retries=4,
 )
 def translate_task(self: Any, job_id: str) -> str:
     """소스 자막 청크를 번역하고 translated 트랙을 DB에 저장한다."""
@@ -155,10 +156,22 @@ def translate_task(self: Any, job_id: str) -> str:
         return str(run_async(_execute(job_id)))
     except (ProviderRateLimitError, ProviderTransientError) as exc:
         # Celery retry — max_retries=4, 총 5회 호출 (1s/2s/4s/8s backoff)
+        # 주의: max_retries 초과 시 self.retry(exc=exc)는 MaxRetriesExceededError 대신
+        # 원래 exc(ProviderRateLimitError 등)를 raise_with_context로 재발생시킨다.
+        # 따라서 retry 한계 도달 여부를 직접 확인하고 failed 처리를 먼저 수행한다.
+        if self.request.retries >= self.max_retries:
+            update_job_status(
+                job_id,
+                "failed",
+                error_stage="translating",
+                error_code="TRANSLATION_FAILED",
+                error_message=str(exc),
+            )
+            raise
         try:
             raise self.retry(exc=exc, countdown=2 ** self.request.retries)
         except self.MaxRetriesExceededError:
-            # 모든 retry 소진 → failed 전이
+            # 안전망: 위에서 처리되지 않은 경우 대비
             update_job_status(
                 job_id,
                 "failed",
