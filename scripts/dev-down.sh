@@ -9,19 +9,29 @@ PID_DIR="${REPO_ROOT}/var/run"
 kill_pid_file() {
   local label="$1"
   local pid_file="$2"
-  if [[ -f "${pid_file}" ]]; then
-    local pid
-    pid=$(cat "${pid_file}")
-    if kill -0 "${pid}" 2>/dev/null; then
-      echo "[종료] ${label} PID=${pid}"
-      kill "${pid}"
-    else
-      echo "[스킵] ${label} (PID=${pid} 이미 종료됨)"
-    fi
-    rm -f "${pid_file}"
-  else
+  if [[ ! -f "${pid_file}" ]]; then
     echo "[스킵] ${label} (PID 파일 없음: ${pid_file})"
+    return 0
   fi
+  local pid
+  pid=$(cat "${pid_file}")
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    echo "[스킵] ${label} (PID=${pid} 이미 종료됨)"
+    rm -f "${pid_file}"
+    return 0
+  fi
+  echo "[종료] ${label} PID=${pid} (SIGTERM)"
+  kill "${pid}" 2>/dev/null || true
+  # SIGTERM 후 최대 5초 대기, 안 죽으면 SIGKILL
+  for _ in $(seq 1 10); do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    echo "[강제 종료] ${label} PID=${pid} (SIGKILL)"
+    kill -9 "${pid}" 2>/dev/null || true
+  fi
+  rm -f "${pid_file}"
 }
 
 echo "=== 서비스 종료 시작 ==="

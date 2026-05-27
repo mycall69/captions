@@ -5,11 +5,18 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
+.coverage
+coverage/
+htmlcov/
 
 # Node
 node_modules/
 frontend/.next/
 frontend/out/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
 
 # Runtime
 var/
