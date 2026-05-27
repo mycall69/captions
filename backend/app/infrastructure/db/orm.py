@@ -342,7 +342,7 @@ class JobEvent(Base):
     """작업 이벤트 감사 로그.
 
     SSE 재연결 시 last-event-id 이후를 replay하는 데 사용된다.
-    event_type 허용 값: state_changed | progress | error | info
+    event_type 허용 값: job.state_changed | job.progress | job.completed | job.failed | job.info
     payload: SSE push payload와 동일 형식의 JSON 문자열
     """
 
@@ -355,7 +355,7 @@ class JobEvent(Base):
         nullable=False,
     )
 
-    # event_type 허용 값: state_changed | progress | error | info
+    # event_type 허용 값: job.state_changed | job.progress | job.completed | job.failed | job.info
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
 
     # SSE payload와 동일 형식의 JSON (Text 컬럼에 JSON 직렬화 저장)

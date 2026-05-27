@@ -30,7 +30,6 @@ def mark_failed_on_error(
     Celery on_error 콜백으로 등록되며, chain 내 임의 태스크 실패 시 호출된다.
     DB 오류는 경고 로그를 남기고 무시한다 (이 핸들러 자체가 실패하면 안 된다).
     """
-    import contextlib
 
     async def _mark() -> None:
         try:
@@ -45,13 +44,14 @@ def mark_failed_on_error(
                     error_code="PIPELINE_FAILED",
                     error_message=str(exc),
                 )
-                with contextlib.suppress(Exception):
-                    await publisher.publish_failed(
-                        job_id=job_id,
-                        error_stage="unknown",
-                        error_code="PIPELINE_FAILED",
-                        error_message=str(exc),
-                    )
+                # 원자성: publish 실패 시 mark_failed 까지 함께 롤백되도록 suppress 제거.
+                # 바깥쪽 try/except 가 핸들러 자체의 크래시를 방지한다.
+                await publisher.publish_failed(
+                    job_id=job_id,
+                    error_stage="unknown",
+                    error_code="PIPELINE_FAILED",
+                    error_message=str(exc),
+                )
                 logger.warning(
                     "pipeline.failed",
                     job_id=job_id,

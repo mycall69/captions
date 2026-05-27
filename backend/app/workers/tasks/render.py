@@ -54,8 +54,6 @@ def save_video_asset(
 
 async def _execute(job_id: str) -> str:
     """render_task의 비동기 실행 본체."""
-    import contextlib
-
     async with task_session() as session:
         from app.core.exceptions import NotFoundError
         from app.domain.jobs.service import JobsService
@@ -73,12 +71,12 @@ async def _execute(job_id: str) -> str:
         if current_job.status != JobStatus.rendering:
             previous_status = current_job.status
             await service.transition_to(job_id, JobStatus.rendering)
-            with contextlib.suppress(Exception):
-                await publisher.publish_state_changed(
-                    job_id=job_id,
-                    previous_status=previous_status,
-                    new_status=JobStatus.rendering,
-                )
+            # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
+            await publisher.publish_state_changed(
+                job_id=job_id,
+                previous_status=previous_status,
+                new_status=JobStatus.rendering,
+            )
 
         source_track = await srepo.get_track(job_id, "source")
         translated_track = await srepo.get_track(job_id, "translated")
@@ -122,15 +120,15 @@ async def _execute(job_id: str) -> str:
 
         # 종결 전이 + ``job.completed`` 이벤트 발행 (동일 트랜잭션)
         await service.transition_to(job_id, JobStatus.completed)
-        with contextlib.suppress(Exception):
-            await publisher.publish_completed(
-                job_id=job_id,
-                assets={
-                    "video_mp4": f"/v1/jobs/{job_id}/video",
-                    "dual_srt": f"/v1/jobs/{job_id}/download?format=srt",
-                    "dual_vtt": f"/v1/jobs/{job_id}/download?format=vtt",
-                },
-            )
+        # 원자성: publish 실패 시 completed 전이 + 자산 INSERT 가 함께 롤백되도록 suppress 제거
+        await publisher.publish_completed(
+            job_id=job_id,
+            assets={
+                "video_mp4": f"/v1/jobs/{job_id}/video",
+                "dual_srt": f"/v1/jobs/{job_id}/download?format=srt",
+                "dual_vtt": f"/v1/jobs/{job_id}/download?format=vtt",
+            },
+        )
         logger.info("worker.render.complete", job_id=job_id)
         return job_id
 

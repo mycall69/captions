@@ -87,12 +87,12 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
             with contextlib.suppress(Exception):
                 await service.transition_to(job_id, JobStatus.downloading)
                 if previous_status != JobStatus.downloading:
-                    with contextlib.suppress(Exception):
-                        await publisher.publish_state_changed(
-                            job_id=job_id,
-                            previous_status=previous_status or JobStatus.pending,
-                            new_status=JobStatus.downloading,
-                        )
+                    # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
+                    await publisher.publish_state_changed(
+                        job_id=job_id,
+                        previous_status=previous_status or JobStatus.pending,
+                        new_status=JobStatus.downloading,
+                    )
 
             if output_path.exists():
                 size = output_path.stat().st_size
@@ -104,13 +104,13 @@ async def _update_job_state(job_id: str, output_path: Path) -> None:
                         mime_type=mimetypes.guess_type("video.mp4")[0] or "video/mp4",
                         byte_size=size,
                     )
-                with contextlib.suppress(Exception):
-                    await publisher.publish_progress(
-                        job_id=job_id,
-                        status=JobStatus.downloading,
-                        progress=1.0,
-                        detail={"downloaded_bytes": size, "total_bytes": size},
-                    )
+                # 원자성: publish 실패 시 자산 등록까지 함께 롤백되도록 suppress 제거
+                await publisher.publish_progress(
+                    job_id=job_id,
+                    status=JobStatus.downloading,
+                    progress=1.0,
+                    detail={"downloaded_bytes": size, "total_bytes": size},
+                )
                 logger.info("worker.download.complete", job_id=job_id, bytes=size)
     except Exception as exc:
         logger.warning("worker.download.db_error", job_id=job_id, error=str(exc))

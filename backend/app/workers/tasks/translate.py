@@ -59,7 +59,6 @@ def update_job_status(job_id: str, status: str, **kwargs: object) -> None:
     테스트에서 monkeypatch 가능하도록 모듈 수준 함수로 분리한다.
     상태 갱신과 함께 SSE 이벤트(``job.failed`` / ``job.state_changed``)를 발행한다.
     """
-    import contextlib
 
     async def _update() -> None:
         async with task_session() as session:
@@ -78,30 +77,28 @@ def update_job_status(job_id: str, status: str, **kwargs: object) -> None:
                     error_code=error_code,
                     error_message=error_message,
                 )
-                with contextlib.suppress(Exception):
-                    await publisher.publish_failed(
-                        job_id=job_id,
-                        error_stage=error_stage,
-                        error_code=error_code,
-                        error_message=error_message,
-                    )
+                # 원자성: publish 실패 시 mark_failed 까지 함께 롤백되도록 suppress 제거
+                await publisher.publish_failed(
+                    job_id=job_id,
+                    error_stage=error_stage,
+                    error_code=error_code,
+                    error_message=error_message,
+                )
             else:
                 current = await service.get(job_id)
                 await service.transition_to(job_id, JobStatus(status))
-                with contextlib.suppress(Exception):
-                    await publisher.publish_state_changed(
-                        job_id=job_id,
-                        previous_status=current.status,
-                        new_status=JobStatus(status),
-                    )
+                # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
+                await publisher.publish_state_changed(
+                    job_id=job_id,
+                    previous_status=current.status,
+                    new_status=JobStatus(status),
+                )
 
     run_async(_update())
 
 
 async def _execute(job_id: str) -> str:
     """translate_task의 비동기 실행 본체."""
-    import contextlib
-
     async with task_session() as session:
         from app.core.exceptions import InvalidInputError, NotFoundError
         from app.core.ids import new_ulid
@@ -120,12 +117,12 @@ async def _execute(job_id: str) -> str:
         if job.status != JobStatus.translating:
             previous_status = job.status
             await service.transition_to(job_id, JobStatus.translating)
-            with contextlib.suppress(Exception):
-                await publisher.publish_state_changed(
-                    job_id=job_id,
-                    previous_status=previous_status,
-                    new_status=JobStatus.translating,
-                )
+            # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
+            await publisher.publish_state_changed(
+                job_id=job_id,
+                previous_status=previous_status,
+                new_status=JobStatus.translating,
+            )
             job = await service.get(job_id)
 
         source_track = await srepo.get_track(job_id, "source")
@@ -162,17 +159,17 @@ async def _execute(job_id: str) -> str:
             # 청크 단위 진행률 publish — chunk_total 이 0 이 아닌 경우에만
             if chunk_total > 0:
                 completed = chunk_index + 1
-                with contextlib.suppress(Exception):
-                    await publisher.publish_progress(
-                        job_id=job_id,
-                        status=JobStatus.translating,
-                        progress=completed / chunk_total,
-                        detail={
-                            "chunk_index": completed,
-                            "chunk_total": chunk_total,
-                            "retry_count": 0,
-                        },
-                    )
+                # 원자성: publish 실패 시 청크 처리까지 함께 롤백되도록 suppress 제거
+                await publisher.publish_progress(
+                    job_id=job_id,
+                    status=JobStatus.translating,
+                    progress=completed / chunk_total,
+                    detail={
+                        "chunk_index": completed,
+                        "chunk_total": chunk_total,
+                        "retry_count": 0,
+                    },
+                )
 
         target_track = SubtitleTrack(
             id=new_ulid(),

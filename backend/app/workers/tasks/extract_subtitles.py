@@ -254,12 +254,12 @@ async def _transition_state(job_id: str) -> None:
         with contextlib.suppress(Exception):
             await service.transition_to(job_id, JobStatus.subtitle_processing)
             if previous_status != JobStatus.subtitle_processing:
-                with contextlib.suppress(Exception):
-                    await publisher.publish_state_changed(
-                        job_id=job_id,
-                        previous_status=previous_status,
-                        new_status=JobStatus.subtitle_processing,
-                    )
+                # 원자성: publish 실패 시 transition 까지 함께 롤백되도록 suppress 제거
+                await publisher.publish_state_changed(
+                    job_id=job_id,
+                    previous_status=previous_status,
+                    new_status=JobStatus.subtitle_processing,
+                )
 
 
 async def _mark_failed(job_id: str, message: str) -> None:
@@ -276,13 +276,13 @@ async def _mark_failed(job_id: str, message: str) -> None:
                 error_code="SUBTITLE_NOT_FOUND",
                 error_message=message,
             )
-            with contextlib.suppress(Exception):
-                await publisher.publish_failed(
-                    job_id=job_id,
-                    error_stage="subtitle_processing",
-                    error_code="SUBTITLE_NOT_FOUND",
-                    error_message=message,
-                )
+            # 원자성: publish 실패 시 mark_failed 까지 함께 롤백되도록 suppress 제거
+            await publisher.publish_failed(
+                job_id=job_id,
+                error_stage="subtitle_processing",
+                error_code="SUBTITLE_NOT_FOUND",
+                error_message=message,
+            )
 
 
 async def _save_subtitle_track(
@@ -332,13 +332,13 @@ async def _save_subtitle_track(
         # subtitle_processing 단계 종료를 알리는 progress=1.0 이벤트 발행
         from app.domain.jobs.states import JobStatus
 
-        with contextlib.suppress(Exception):
-            await publisher.publish_progress(
-                job_id=job_id,
-                status=JobStatus.subtitle_processing,
-                progress=1.0,
-                detail={"cue_count": len(normalized)},
-            )
+        # 원자성: publish 실패 시 트랙 저장까지 함께 롤백되도록 suppress 제거
+        await publisher.publish_progress(
+            job_id=job_id,
+            status=JobStatus.subtitle_processing,
+            progress=1.0,
+            detail={"cue_count": len(normalized)},
+        )
 
     logger.info(
         "worker.extract.complete",
