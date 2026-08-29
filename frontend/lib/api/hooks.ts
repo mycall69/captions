@@ -11,7 +11,7 @@
  */
 'use client';
 import * as React from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api/client';
 import type { components } from '@/lib/api/types.gen';
 import { useJobEvents, type RawEventPayload } from '@/lib/sse';
@@ -19,6 +19,9 @@ import type { JobEvent as UiJobEvent } from '@/components/stage-progress/StageLo
 
 export type Job = components['schemas']['Job'];
 export type JobStatus = components['schemas']['JobStatus'];
+export type JobAction = components['schemas']['JobAction'];
+/** DELETE /v1/jobs/{id} 응답 data — VideoJob 필드 + action. */
+export type JobDeleteResult = Job & { action: JobAction };
 
 /** GET /v1/jobs 응답 data 형태 (openapi.yaml §JobListEnvelope.data). */
 export interface JobListData {
@@ -178,5 +181,30 @@ export function useRecentJobs(options?: {
     staleTime: 10_000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
+  });
+}
+
+/**
+ * DELETE /v1/jobs/{id} — 작업 취소 또는 영구 삭제 (FR-028 / FR-030a).
+ *
+ * 응답의 `data.action` 으로 어떤 동작이 일어났는지 알 수 있다 (`cancelled` |
+ * `deleted`). 성공 시 모든 `jobs/recent` 쿼리와 해당 단건 캐시를 무효화하여
+ * 목록·상세 화면이 즉시 갱신되도록 한다.
+ */
+export function useDeleteJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string): Promise<JobDeleteResult> =>
+      apiFetch<JobDeleteResult>(`/jobs/${jobId}`, { method: 'DELETE' }),
+    onSuccess: (data, jobId) => {
+      // 단건 캐시 제거 (삭제된 경우) 또는 갱신 (취소된 경우).
+      if (data.action === 'deleted') {
+        queryClient.removeQueries({ queryKey: jobQueryKey(jobId) });
+      } else {
+        queryClient.setQueryData<Job>(jobQueryKey(jobId), data);
+      }
+      // 최근 작업 목록 전체를 다시 가져온다.
+      void queryClient.invalidateQueries({ queryKey: ['jobs', 'recent'] });
+    },
   });
 }

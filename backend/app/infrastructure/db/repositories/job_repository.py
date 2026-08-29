@@ -61,12 +61,13 @@ def _decode_cursor(cursor: str) -> datetime:
 def _to_domain(orm: OrmVideoJob) -> VideoJob:
     """ORM VideoJob 행 → Pydantic VideoJob 도메인 모델 변환.
 
-    video_title / video_channel / video_duration_sec / subtitle_source는
+    video_title / video_channel / video_channel_url / video_duration_sec / subtitle_source는
     VideoMetadata 서브 모델로 매핑한다.
     """
     metadata = VideoMetadata(
         title=orm.video_title,
         channel=orm.video_channel,
+        channel_url=orm.video_channel_url,
         duration_sec=orm.video_duration_sec,
         subtitle_source=orm.subtitle_source,
     )
@@ -206,6 +207,7 @@ class SqlJobRepository:
             error_message=job.error_message,
             video_title=job.metadata.title,
             video_channel=job.metadata.channel,
+            video_channel_url=job.metadata.channel_url,
             video_duration_sec=job.metadata.duration_sec,
             subtitle_source=job.metadata.subtitle_source,
             created_at=job.created_at,
@@ -260,13 +262,14 @@ class SqlJobRepository:
         return _to_domain(orm)
 
     async def update_metadata(self, job_id: str, metadata: VideoMetadata) -> VideoJob:
-        """비디오 메타데이터(title/channel/duration/source)를 갱신한다."""
+        """비디오 메타데이터(title/channel/channel_url/duration/source)를 갱신한다."""
         stmt = (
             update(OrmVideoJob)
             .where(OrmVideoJob.id == job_id)
             .values(
                 video_title=metadata.title,
                 video_channel=metadata.channel,
+                video_channel_url=metadata.channel_url,
                 video_duration_sec=metadata.duration_sec,
                 subtitle_source=metadata.subtitle_source,
                 updated_at=datetime.now(tz=UTC),
@@ -318,3 +321,21 @@ class SqlJobRepository:
         logger.debug(
             "update_progress no-op: job_id=%r, progress=%.3f (DB 미저장)", job_id, progress
         )
+
+    async def delete(self, job_id: str) -> None:
+        """video_job 행을 삭제한다 (FR-030a — 종결 작업 hard delete).
+
+        ORM relationship 의 cascade 설정에 의해 SubtitleTrack / SubtitleCue /
+        TranslationTask / RenderTask / VideoAsset / JobEvent 까지 함께 제거된다.
+
+        주의: cascade ORM 동작을 활용하기 위해 인스턴스를 로드한 뒤 session.delete
+        를 호출한다 (bulk DELETE 문은 ORM-level cascade 를 트리거하지 않는다).
+        """
+        fetch = await self._session.execute(
+            select(OrmVideoJob).where(OrmVideoJob.id == job_id)
+        )
+        orm = fetch.scalar_one_or_none()
+        if orm is None:
+            return
+        await self._session.delete(orm)
+        await self._session.flush()

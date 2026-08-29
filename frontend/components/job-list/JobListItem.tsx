@@ -17,6 +17,7 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/job-list/StatusBadge';
+import { DeleteJobButton } from '@/components/job-list/DeleteJobButton';
 import type { components } from '@/lib/api/types.gen';
 import { STAGE_LABEL_KO } from '@/lib/i18n/jobLabels';
 
@@ -69,6 +70,7 @@ function JobListItemImpl({ job, className }: JobListItemProps) {
   const router = useRouter();
   const title = job.metadata.title ?? job.youtube_video_id;
   const channel = job.metadata.channel ?? '';
+  const channelUrl = job.metadata.channel_url ?? null;
   const duration = formatDuration(job.metadata.duration_sec ?? null);
   const isCompleted = job.status === TERMINAL_COMPLETED;
   const isFailed = job.status === TERMINAL_FAILED;
@@ -103,6 +105,11 @@ function JobListItemImpl({ job, className }: JobListItemProps) {
     router.push(`/jobs/${job.id}`);
   };
 
+  // FR-030a — 종결 작업(completed/failed)만 영구 삭제 가능.
+  // DeleteJobButton 은 종결 상태에서만 렌더되므로 비종결 항목에는 useDeleteJob
+  // mutation hook 이 호출되지 않는다 (TanStack Query Provider 의존 회피).
+  const isTerminal = isCompleted || isFailed;
+
   return (
     <li
       data-testid="job-list-item"
@@ -122,9 +129,35 @@ function JobListItemImpl({ job, className }: JobListItemProps) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="truncate text-base font-semibold text-foreground">{title}</div>
+        {/* 제목 — 원본 YouTube 영상 페이지로 새 탭 이동 (보안: noopener noreferrer). */}
+        {job.source_url ? (
+          <a
+            href={job.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="YouTube 에서 원본 영상 열기"
+            className="block truncate text-base font-semibold text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
+          >
+            {title}
+          </a>
+        ) : (
+          <div className="truncate text-base font-semibold text-foreground">{title}</div>
+        )}
         <div className="mt-1 truncate text-sm text-muted-foreground">
-          {channel && <span>{channel}</span>}
+          {channel &&
+            (channelUrl ? (
+              <a
+                href={channelUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="YouTube 채널 페이지 열기"
+                className="hover:underline focus-visible:underline focus-visible:outline-none"
+              >
+                {channel}
+              </a>
+            ) : (
+              <span>{channel}</span>
+            ))}
           {channel && <span className="mx-1">·</span>}
           <span>{duration}</span>
           {subtitleSourceLabel && (
@@ -160,6 +193,7 @@ function JobListItemImpl({ job, className }: JobListItemProps) {
         <Button variant={cta.variant} size="sm" onClick={handleClick}>
           {cta.label}
         </Button>
+        {isTerminal && <DeleteJobButton jobId={job.id} jobTitle={title} />}
       </div>
     </li>
   );

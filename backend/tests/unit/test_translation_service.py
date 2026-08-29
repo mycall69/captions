@@ -242,3 +242,31 @@ class TestTranslationServiceRetryDelays:
             await service.translate(_make_chunk())
 
         assert sleep_calls == list(RETRY_DELAYS)
+
+    @pytest.mark.asyncio
+    async def test_retry_honours_retry_after_seconds_hint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ProviderRateLimitError 가 retry_after_seconds 를 노출하면 backoff 대신
+        해당 값을 사용해야 한다 (Anthropic 429 의 retry-after 헤더 존중).
+        """
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+
+        monkeypatch.setattr("app.domain.translation.service.asyncio.sleep", fake_sleep)
+
+        class _HintedRateLimitProvider:
+            async def translate_chunk(self, chunk: object) -> object:
+                raise ProviderRateLimitError(
+                    "rate limited", retry_after_seconds=12.5
+                )
+
+        service = TranslationService(_HintedRateLimitProvider(), cache=None)
+
+        with pytest.raises(ProviderRateLimitError):
+            await service.translate(_make_chunk())
+
+        # 4회 retry 모두 헤더 hint(12.5s)를 사용해야 함 (RETRY_DELAYS 무시).
+        assert sleep_calls == [12.5, 12.5, 12.5, 12.5]

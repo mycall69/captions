@@ -20,7 +20,6 @@ pytest.importorskip(
 from app.domain.subtitles.chunking import (
     chunk_cues,  # noqa: E402  # type: ignore[reportMissingImports]
 )
-
 from app.domain.translation.provider import ChunkCue  # noqa: E402
 
 

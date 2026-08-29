@@ -57,7 +57,7 @@ async def _execute(job_id: str) -> str:
     async with task_session() as session:
         from app.core.exceptions import NotFoundError
         from app.domain.jobs.service import JobsService
-        from app.domain.jobs.states import JobStatus
+        from app.domain.jobs.states import TERMINAL_STATUSES, JobStatus
         from app.domain.subtitles.dual_generator import generate_dual_srt, generate_dual_vtt
 
         jrepo = jobs_repo(session)
@@ -68,6 +68,15 @@ async def _execute(job_id: str) -> str:
 
         # 멱등성: 이미 rendering 상태이면 transition 건너뜀
         current_job = await service.get(job_id)
+        # Chain abort: 이전 단계가 mark_failed 처리 후 정상 종료한 경우 종결 상태
+        # 작업에 대해서는 즉시 종료한다 (translate.py 와 동일 패턴).
+        if current_job.status in TERMINAL_STATUSES:
+            logger.info(
+                "worker.render.skipped_terminal_status",
+                job_id=job_id,
+                status=current_job.status.value,
+            )
+            return job_id
         if current_job.status != JobStatus.rendering:
             previous_status = current_job.status
             await service.transition_to(job_id, JobStatus.rendering)

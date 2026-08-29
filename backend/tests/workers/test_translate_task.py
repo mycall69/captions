@@ -178,3 +178,53 @@ class TestTranslateTaskChunking:
         assert provider.call_count >= 1, (
             "translate_task가 FakeTranslationProvider.translate_chunk를 최소 1회 호출해야 한다"
         )
+
+
+class TestTranslateTaskEmbeddedTargetSkip:
+    """FR-013a: 영상에 source+target 자막이 모두 임베디드된 경우 LLM 호출 건너뜀."""
+
+    @pytest.mark.asyncio
+    async def test_skip_when_translated_track_exists(
+        self, translate_ready_job: str, db_session: object
+    ) -> None:
+        """translated 트랙이 이미 존재하면 provider.translate_chunk 가 호출되어선 안 된다."""
+        from app.core.ids import new_ulid
+        from app.domain.subtitles.models import SubtitleCue, SubtitleTrack
+        from app.infrastructure.db.repositories.subtitle_repository import (
+            SqlSubtitleRepository,
+        )
+
+        srepo = SqlSubtitleRepository(db_session)  # type: ignore[arg-type]
+        cues = [
+            SubtitleCue(
+                sequence=i + 1,
+                start_ms=i * 5000,
+                end_ms=i * 5000 + 4000,
+                text=f"임베디드 한글 자막 {i + 1}",
+            )
+            for i in range(30)
+        ]
+        track = SubtitleTrack(
+            id=new_ulid(),
+            job_id=translate_ready_job,
+            kind="translated",
+            language="ko",
+            origin="manual",
+            source_format="vtt",
+            cue_count=len(cues),
+            cues=cues,
+        )
+        await srepo.save_track(track)
+        await db_session.commit()  # type: ignore[attr-defined]
+
+        provider = FakeTranslationProvider()
+        with patch(
+            "app.workers.tasks.translate.get_translation_provider",
+            return_value=provider,
+        ):
+            translate_task(translate_ready_job)
+
+        assert provider.call_count == 0, (
+            f"translated 트랙이 이미 존재할 때 provider 호출이 일어나선 안 된다. "
+            f"실제 호출: {provider.call_count}"
+        )

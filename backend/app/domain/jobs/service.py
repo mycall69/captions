@@ -2,7 +2,7 @@
 
 연관 결정:
 - research §10: 동일 URL 재요청 → 기존 작업 재사용 (completed: 200, 진행 중: 200)
-- spec Q2 / FR-003: 영상 길이 > 60분 → 거절 (작업 미생성)
+- spec Q2 (2026-05-27 60분 → 2026-05-28 120분으로 확장) / FR-003: 영상 길이 > 120분 → 거절 (작업 미생성)
 - 상태 전이 검증은 states.ensure_transition으로 위임 (헌법 II)
 """
 
@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import structlog
 
 from app.core.exceptions import (
+    IllegalStateTransitionError,
     NotFoundError,
 )
 from app.core.ids import new_job_id
@@ -51,7 +52,7 @@ class JobsService:
            - completed: 재사용 (reused=True)
            - 진행 중: 재사용 (reused=True)
            - failed: 신규 생성
-        3) 신규 생성 시: 메타데이터 fetch (60분 검증 포함 — VideoTooLongError 가능)
+        3) 신규 생성 시: 메타데이터 fetch (120분 검증 포함 — VideoTooLongError 가능)
         4) DB INSERT, 도메인 모델 반환
         """
         video_id = parse_youtube_url(source_url)
@@ -67,7 +68,7 @@ class JobsService:
             )
             return existing.model_copy(update={"reused": True})
 
-        # 신규 — 메타데이터 fetch (60분 검증 포함; VideoTooLongError가 전파되면 DB 미기록)
+        # 신규 — 메타데이터 fetch (120분 검증 포함; VideoTooLongError가 전파되면 DB 미기록)
         metadata = await self._fetch_metadata(video_id)
 
         now = datetime.now(UTC)
@@ -176,10 +177,22 @@ class JobsService:
     ) -> VideoJob:
         """작업을 실패 상태로 전이하고 실패 정보를 기록한다.
 
-        상태 전이 머신에서 허용하는 경우에만 failed로 전이 가능.
-        completed 등 종결 상태에서는 IllegalStateTransitionError를 발생시킨다.
+        - 비종결 상태(downloading, translating 등): failed 로 전이 + 사유 기록.
+        - **이미 failed**: 첫 실패 사유를 보존하기 위해 noop 으로 현재 VideoJob 반환
+          (chain abort 미흡 / 동일 작업에 대한 중복 호출에 대비한 멱등성).
+        - completed: 정상 완료를 뒤집는 명백한 버그 신호 → IllegalStateTransitionError.
         """
         current = await self.get(job_id)
+        if current.status == JobStatus.failed:
+            logger.info(
+                "job.mark_failed.idempotent_noop",
+                job_id=job_id,
+                preserved_error_stage=current.error_stage,
+                preserved_error_code=current.error_code,
+                attempted_error_stage=error_stage,
+                attempted_error_code=error_code,
+            )
+            return current
         ensure_transition(current.status, JobStatus.failed)
         completed_at = datetime.now(UTC)
         updated = await self._repo.update_status(
@@ -198,3 +211,27 @@ class JobsService:
             error_message=error_message,
         )
         return updated
+
+    async def delete_terminal(self, job_id: str) -> VideoJob:
+        """종결 작업(completed/failed)을 영구 삭제한다 (FR-030a).
+
+        호출자(라우트 계층)가 storage purge 를 수행한 뒤 본 메서드를 호출하면
+        DB 행이 cascade 로 제거된다. 진행 중 작업에 호출되면 IllegalStateTransitionError.
+
+        반환값은 삭제 직전의 VideoJob 도메인 모델로, 응답 envelope 에 담아 클라이언트가
+        어떤 작업이 사라졌는지 확인할 수 있게 한다.
+        """
+        current = await self.get(job_id)
+        if current.status not in TERMINAL_STATUSES:
+            raise IllegalStateTransitionError(
+                f"진행 중 작업은 직접 삭제할 수 없습니다 (status={current.status.value}). "
+                "먼저 취소(cancel) 후 삭제하세요.",
+                details={"job_id": job_id, "status": current.status.value},
+            )
+        await self._repo.delete(job_id)
+        logger.info(
+            "job.deleted",
+            job_id=job_id,
+            previous_status=current.status.value,
+        )
+        return current

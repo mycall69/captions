@@ -118,13 +118,13 @@ class TestPostJobsValidation:
     async def test_video_too_long_returns_400_invalid_input(
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """영상 길이가 3600초 초과이면 400 + INVALID_INPUT을 반환해야 한다 (spec FR-003, §16.2)."""
-        # 메타데이터 조회를 mock하여 duration_sec=7200 (2시간)으로 설정
+        """영상 길이가 7200초 초과이면 400 + INVALID_INPUT을 반환해야 한다 (spec FR-003, §16.2 — 120분 상한)."""
+        # 메타데이터 조회를 mock하여 duration_sec=8000 (120분 + 13분 20초)으로 설정
         try:
             import app.api.v1.routes.jobs as _routes  # type: ignore[reportMissingImports]
 
             async def _fake_fetch_duration(_url: str) -> int:
-                return 7200
+                return 8000
 
             monkeypatch.setattr(_routes, "fetch_video_duration", _fake_fetch_duration, raising=False)
         except (ImportError, AttributeError):

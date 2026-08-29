@@ -49,6 +49,7 @@ def get_translation_provider() -> TranslationProvider:
     settings = get_settings()
     return ClaudeTranslationAdapter(
         api_key=settings.anthropic_api_key,
+        oauth_token=settings.claude_code_oauth_token,
         model=settings.translation_model,
     )
 
@@ -103,7 +104,7 @@ async def _execute(job_id: str) -> str:
         from app.core.exceptions import InvalidInputError, NotFoundError
         from app.core.ids import new_ulid
         from app.domain.jobs.service import JobsService
-        from app.domain.jobs.states import JobStatus
+        from app.domain.jobs.states import TERMINAL_STATUSES, JobStatus
         from app.domain.subtitles.models import SubtitleCue, SubtitleTrack
         from app.domain.translation.chunking import split_into_chunks
         from app.domain.translation.service import TranslationService
@@ -114,6 +115,16 @@ async def _execute(job_id: str) -> str:
         publisher = event_publisher(session)
         # 멱등성: 이미 translating 상태이면 transition 건너뜀
         job = await service.get(job_id)
+        # Chain abort: 이전 단계가 mark_failed 처리 후 정상 종료한 경우 chain의
+        # 다음 link 가 그대로 실행되더라도 종결 상태 작업에 대해서는 즉시 종료한다.
+        # extract_subtitles_task L201-204 가 의도한 "체인은 DB 상태로 흐름 제어" 패턴.
+        if job.status in TERMINAL_STATUSES:
+            logger.info(
+                "worker.translate.skipped_terminal_status",
+                job_id=job_id,
+                status=job.status.value,
+            )
+            return job_id
         if job.status != JobStatus.translating:
             previous_status = job.status
             await service.transition_to(job_id, JobStatus.translating)
@@ -128,6 +139,29 @@ async def _execute(job_id: str) -> str:
         source_track = await srepo.get_track(job_id, "source")
         if source_track is None:
             raise NotFoundError("source 트랙이 없습니다.", details={"job_id": job_id})
+
+        # FR-013a — 영상에 source+target 자막이 모두 임베디드되어 있어
+        # extract_subtitles 가 translated 트랙을 이미 저장한 경우 LLM 호출을 건너뛴다.
+        # 멱등성: 이전 translate_task 가 정상 완료해 trackin 저장한 경우에도 동일하게 skip.
+        existing_translated = await srepo.get_track(job_id, "translated")
+        if existing_translated is not None:
+            await publisher.publish_progress(
+                job_id=job_id,
+                status=JobStatus.translating,
+                progress=1.0,
+                detail={
+                    "skipped": True,
+                    "reason": "embedded_target",
+                    "cue_count": existing_translated.cue_count,
+                },
+            )
+            logger.info(
+                "worker.translate.skipped_embedded_target",
+                job_id=job_id,
+                target_lang=existing_translated.language,
+                cues=existing_translated.cue_count,
+            )
+            return job_id
 
         source_cues = await srepo.load_all_cues(source_track.id)
 

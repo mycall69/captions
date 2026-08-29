@@ -40,11 +40,21 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * 작업 취소
-         * @description 진행 중 작업을 취소한다. 종결 상태(`completed` / `failed`) 작업에 대해서는
-         *     409를 반환한다.
+         * 작업 취소 또는 영구 삭제
+         * @description 상태에 따라 분기 동작한다 — 클라이언트는 분기 처리 불필요.
+         *
+         *     - **진행 중** (`pending`, `downloading`, `subtitle_processing`,
+         *       `translating`, `rendering`): cancel 시맨틱 — `failed` / `USER_CANCELLED`
+         *       마킹 + `var/storage/<job_id>/` 산출물 purge. DB row 는 보존.
+         *       spec FR-028 (Clarifications 2026-05-27).
+         *     - **종결** (`completed`, `failed`): hard delete — storage purge + DB row
+         *       영구 제거 (cascade 로 SubtitleTrack / Cue / Asset / JobEvent 등 함께 제거).
+         *       spec FR-030a (Clarifications 2026-05-28).
+         *
+         *     응답 envelope `data.action` 으로 어떤 동작이 일어났는지 구분 (`cancelled` |
+         *     `deleted`). 그 외 `data` 키는 VideoJob 필드와 동일.
          */
-        delete: operations["cancelJob"];
+        delete: operations["cancelOrDeleteJob"];
         options?: never;
         head?: never;
         patch?: never;
@@ -152,6 +162,12 @@ export interface components {
         VideoMetadata: {
             title: string | null;
             channel: string | null;
+            /**
+             * Format: uri
+             * @description YouTube 채널 페이지 URL — UI 채널명 링크에 사용
+             * @example https://www.youtube.com/@example
+             */
+            channel_url: string | null;
             duration_sec: number | null;
             /** @enum {string|null} */
             subtitle_source: "manual" | "auto" | null;
@@ -183,6 +199,25 @@ export interface components {
         JobEnvelope: {
             success: boolean;
             data?: components["schemas"]["Job"];
+            error?: components["schemas"]["ErrorBody"];
+            request_id: string;
+        };
+        /**
+         * @description DELETE /jobs/{job_id} 응답에서 어떤 동작이 일어났는지 표시.
+         *     - cancelled: 진행 중 작업이 USER_CANCELLED 로 마킹됨 (DB row 보존)
+         *     - deleted:   종결 작업이 영구 삭제됨 (DB row + 산출물 제거)
+         * @enum {string}
+         */
+        JobAction: "cancelled" | "deleted";
+        /**
+         * @description DELETE /jobs/{job_id} 전용 envelope. data 는 VideoJob 필드 + action 을 포함한다
+         *     (backward compatible — 기존 JobEnvelope 호출자도 status / id 등을 그대로 사용 가능).
+         */
+        JobActionEnvelope: {
+            success: boolean;
+            data?: components["schemas"]["Job"] & {
+                action: components["schemas"]["JobAction"];
+            };
             error?: components["schemas"]["ErrorBody"];
             request_id: string;
         };
@@ -375,7 +410,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
-    cancelJob: {
+    cancelOrDeleteJob: {
         parameters: {
             query?: never;
             header?: never;
@@ -386,17 +421,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 취소 처리됨 */
+            /** @description 취소 또는 삭제 처리됨 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobEnvelope"];
+                    "application/json": components["schemas"]["JobActionEnvelope"];
                 };
             };
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
         };
     };
     getSubtitles: {

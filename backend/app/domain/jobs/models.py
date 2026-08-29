@@ -30,6 +30,8 @@ class VideoMetadata(BaseModel):
 
     title: str | None = None
     channel: str | None = None
+    channel_url: str | None = None
+    """YouTube 채널 페이지 URL — yt-dlp `channel_url` 키 매핑. UI 채널명 링크에 사용."""
     duration_sec: int | None = None
     subtitle_source: SubtitleSource | None = None
 

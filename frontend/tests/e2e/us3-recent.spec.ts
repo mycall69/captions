@@ -43,6 +43,7 @@ test.describe('US3: 최근 작업 재방문 (P3 acceptance)', () => {
                   metadata: {
                     title: '재방문 테스트 영상',
                     channel: '테스트 채널',
+                    channel_url: 'https://www.youtube.com/@test-channel',
                     duration_sec: 754,
                     subtitle_source: 'manual',
                   },

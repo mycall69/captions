@@ -46,7 +46,7 @@ class TestErrorEnvelope:
 
     def test_includes_details_when_provided(self) -> None:
         """details가 제공되면 error body에 포함되어야 한다."""
-        details = {"duration_sec": 4523, "max_duration_sec": 3600}
+        details = {"duration_sec": 8123, "max_duration_sec": 7200}
         result = error_envelope("INVALID_INPUT", "영상 길이 초과", "req-jkl", details=details)
         error = result["error"]
         assert error["details"] == details  # type: ignore[index]

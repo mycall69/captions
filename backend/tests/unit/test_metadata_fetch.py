@@ -1,10 +1,10 @@
 """T065: yt-dlp 메타데이터 추출 + 영상 길이 검증 단위 테스트.
 
-검증 항목:
+검증 항목 (spec Clarifications 2026-05-28 — 60분 → 120분 확장 반영):
 - 정상 경로: title·channel·duration_sec 파싱
-- duration > 3600 → VideoTooLongError (code=INVALID_INPUT)
-- duration == 3600 → 허용 (경계값)
-- duration == 3601 → 거절 (T065 spec)
+- duration > 7200 → VideoTooLongError (code=INVALID_INPUT)
+- duration == 7200 → 허용 (경계값)
+- duration == 7201 → 거절
 - duration 없음 → duration_sec=None 반환
 """
 
@@ -113,11 +113,11 @@ class TestFetchMetadataHappyPath:
 
 
 class TestDurationValidation:
-    """영상 길이 검증 — 60분 상한."""
+    """영상 길이 검증 — 120분 상한 (spec Clarifications 2026-05-28)."""
 
-    async def test_duration_3601_raises_video_too_long(self) -> None:
-        """duration=3601 → VideoTooLongError 발생 (T065 spec)."""
-        payload = _ytdlp_json(duration=3601)
+    async def test_duration_7201_raises_video_too_long(self) -> None:
+        """duration=7201 → VideoTooLongError 발생."""
+        payload = _ytdlp_json(duration=7201)
         with (  # noqa: SIM117
             patch("asyncio.create_subprocess_exec", return_value=_make_mock_proc(stdout=payload)),
             patch("shutil.which", return_value="/usr/bin/yt-dlp"),
@@ -126,11 +126,11 @@ class TestDurationValidation:
                 await fetch_metadata(VIDEO_ID)
 
         assert exc_info.value.code == "INVALID_INPUT"
-        assert "3601" in exc_info.value.message
+        assert "7201" in exc_info.value.message
 
-    async def test_duration_3601_error_message_contains_actual_duration(self) -> None:
+    async def test_duration_7201_error_message_contains_actual_duration(self) -> None:
         """에러 메시지에 실제 영상 길이(초)가 포함되어야 한다."""
-        payload = _ytdlp_json(duration=3601)
+        payload = _ytdlp_json(duration=7201)
         with (  # noqa: SIM117
             patch("asyncio.create_subprocess_exec", return_value=_make_mock_proc(stdout=payload)),
             patch("shutil.which", return_value="/usr/bin/yt-dlp"),
@@ -138,11 +138,11 @@ class TestDurationValidation:
             with pytest.raises(VideoTooLongError) as exc_info:
                 await fetch_metadata(VIDEO_ID)
 
-        assert "3601" in exc_info.value.message
+        assert "7201" in exc_info.value.message
 
-    async def test_duration_3600_is_allowed(self) -> None:
-        """duration=3600 (정확히 60분) → 허용 (경계값)."""
-        payload = _ytdlp_json(duration=3600)
+    async def test_duration_7200_is_allowed(self) -> None:
+        """duration=7200 (정확히 120분) → 허용 (경계값)."""
+        payload = _ytdlp_json(duration=7200)
         with (
             patch("asyncio.create_subprocess_exec", return_value=_make_mock_proc(stdout=payload)),
             patch("shutil.which", return_value="/usr/bin/yt-dlp"),
@@ -151,9 +151,9 @@ class TestDurationValidation:
 
         assert result.duration_sec == MAX_DURATION_SEC
 
-    async def test_duration_over_3600_raises(self) -> None:
-        """duration > 3600이면 VideoTooLongError가 발생해야 한다."""
-        payload = _ytdlp_json(duration=7200)
+    async def test_duration_over_7200_raises(self) -> None:
+        """duration > 7200이면 VideoTooLongError가 발생해야 한다."""
+        payload = _ytdlp_json(duration=10000)
         with (  # noqa: SIM117
             patch("asyncio.create_subprocess_exec", return_value=_make_mock_proc(stdout=payload)),
             patch("shutil.which", return_value="/usr/bin/yt-dlp"),
@@ -174,7 +174,7 @@ class TestDurationValidation:
 
     async def test_error_details_include_duration_sec(self) -> None:
         """VideoTooLongError의 details에 duration_sec이 포함되어야 한다."""
-        payload = _ytdlp_json(duration=3601)
+        payload = _ytdlp_json(duration=7201)
         with (  # noqa: SIM117
             patch("asyncio.create_subprocess_exec", return_value=_make_mock_proc(stdout=payload)),
             patch("shutil.which", return_value="/usr/bin/yt-dlp"),
@@ -182,7 +182,7 @@ class TestDurationValidation:
             with pytest.raises(VideoTooLongError) as exc_info:
                 await fetch_metadata(VIDEO_ID)
 
-        assert exc_info.value.details.get("duration_sec") == 3601
+        assert exc_info.value.details.get("duration_sec") == 7201
         assert exc_info.value.details.get("max_duration_sec") == MAX_DURATION_SEC
 
 

@@ -261,6 +261,147 @@ def _mock_response(status_code: int) -> Mock:
     return r
 
 
+def _wrap_as_raw(message_obj: object) -> Mock:
+    """``with_raw_response.create()`` 가 돌려주는 raw wrapper 의 최소 mock.
+
+    어댑터는 ``raw.headers`` 를 읽고 ``raw.parse()`` 로 Message 를 추출한다.
+    """
+    raw = Mock()
+    raw.headers = {}
+    raw.parse = Mock(return_value=message_obj)
+    return raw
+
+
+class TestClaudeAdapterHeaderLogging:
+    """anthropic 응답 헤더(rate limit / request-id) 가 debug 로그로 기록되어야 한다.
+
+    structlog logger.debug 를 직접 spy 해 인자 구조를 검증한다 (caplog 는 structlog
+    bind 와 결합이 약해 호출 인자를 안정적으로 캡처하지 못한다).
+    """
+
+    @pytest.mark.asyncio
+    async def test_response_headers_logged_on_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """정상 응답 시 anthropic-ratelimit-* 헤더 + request-id 가 debug 호출에 포함되어야 한다."""
+        from app.infrastructure.providers import claude_adapter as adapter_mod
+
+        debug_calls: list[tuple[str, dict[str, object]]] = []
+
+        def _spy(event: str, **kwargs: object) -> None:
+            debug_calls.append((event, kwargs))
+
+        monkeypatch.setattr(adapter_mod.logger, "debug", _spy)
+
+        adapter = _make_adapter()
+        mock_client = AsyncMock()
+        mock_content = Mock()
+        mock_content.type = "text"
+        mock_content.text = json.dumps({"cues": [{"sequence": 1, "text": "こんにちは"}]})
+        mock_response_obj = Mock()
+        mock_response_obj.content = [mock_content]
+
+        raw = Mock()
+        raw.headers = {
+            "anthropic-ratelimit-requests-limit": "50",
+            "anthropic-ratelimit-requests-remaining": "0",
+            "request-id": "req_test_001",
+            "x-api-key": "secret-key-should-be-redacted",
+        }
+        raw.parse = Mock(return_value=mock_response_obj)
+        mock_client.messages.with_raw_response.create.return_value = raw
+        adapter._client = mock_client
+
+        await adapter.translate_chunk(_a_chunk())
+
+        header_events = [c for c in debug_calls if c[0] == "claude.api.response_headers"]
+        assert header_events, "claude.api.response_headers debug 호출이 한 번 이상 있어야 합니다"
+        kwargs = header_events[-1][1]
+        assert kwargs.get("status") == "ok"
+        assert kwargs.get("anthropic-ratelimit-requests-limit") == "50"
+        assert kwargs.get("anthropic-ratelimit-requests-remaining") == "0"
+        assert kwargs.get("request-id") == "req_test_001"
+        # x-api-key 는 rate-limit 헤더 화이트리스트에 없어 아예 노출 안 되거나
+        # (현재 구현), 노출되더라도 평문이 아니어야 한다.
+        assert kwargs.get("x-api-key") in (None, "***REDACTED***")
+
+    @pytest.mark.asyncio
+    async def test_response_headers_logged_on_rate_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """429 발생 시에도 anthropic 응답 헤더가 debug 호출로 기록되어야 한다."""
+        from app.infrastructure.providers import claude_adapter as adapter_mod
+
+        debug_calls: list[tuple[str, dict[str, object]]] = []
+
+        def _spy(event: str, **kwargs: object) -> None:
+            debug_calls.append((event, kwargs))
+
+        monkeypatch.setattr(adapter_mod.logger, "debug", _spy)
+
+        adapter = _make_adapter()
+        mock_client = AsyncMock()
+        response = _mock_response(429)
+        response.headers = {
+            "anthropic-ratelimit-requests-remaining": "0",
+            "retry-after-ms": "5000",
+        }
+        mock_client.messages.with_raw_response.create.side_effect = AnthropicRateLimitError(
+            message="rate limited", response=response, body=None
+        )
+        adapter._client = mock_client
+
+        with pytest.raises(ProviderRateLimitError):
+            await adapter.translate_chunk(_a_chunk())
+
+        header_events = [c for c in debug_calls if c[0] == "claude.api.response_headers"]
+        assert header_events, "429 케이스에서도 헤더 로깅이 있어야 합니다"
+        kwargs = header_events[-1][1]
+        assert kwargs.get("status") == "rate_limited"
+        assert kwargs.get("retry-after-ms") == "5000"
+        assert kwargs.get("anthropic-ratelimit-requests-remaining") == "0"
+
+
+class TestClaudeAdapterSdkRetryDisabled:
+    """SDK 자체 retry 가 비활성화되어 있어야 한다 (FR-015: retry 권한은 Celery 단일 계층).
+
+    회귀 방지: SDK 가 자체적으로 429/5xx 를 retry 하면 한 번의 _execute 호출이 0.4~0.9s
+    간격으로 다발성 호출을 발사해 Anthropic rate limit 회복 윈도우를 잠식한다.
+    """
+
+    def test_async_anthropic_constructed_with_max_retries_zero_api_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """api_key 인증 경로에서 max_retries=0 이 SDK 에 전달되어야 한다."""
+        recorded: dict[str, object] = {}
+
+        def _spy(**kwargs: object) -> Mock:
+            recorded.update(kwargs)
+            return Mock()
+
+        monkeypatch.setattr(
+            "app.infrastructure.providers.claude_adapter.AsyncAnthropic", _spy
+        )
+        ClaudeTranslationAdapter(api_key="test-key", model="claude-opus-4-7")
+        assert recorded.get("max_retries") == 0
+
+    def test_async_anthropic_constructed_with_max_retries_zero_oauth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """oauth_token 인증 경로에서도 max_retries=0 이 SDK 에 전달되어야 한다."""
+        recorded: dict[str, object] = {}
+
+        def _spy(**kwargs: object) -> Mock:
+            recorded.update(kwargs)
+            return Mock()
+
+        monkeypatch.setattr(
+            "app.infrastructure.providers.claude_adapter.AsyncAnthropic", _spy
+        )
+        ClaudeTranslationAdapter(oauth_token="test-token", model="claude-opus-4-7")  # noqa: S106
+        assert recorded.get("max_retries") == 0
+
+
 class TestClaudeAdapterExceptionMapping:
     """translate_chunk 가 anthropic 예외를 provider 예외로 올바르게 매핑하는지 검증."""
 
@@ -269,7 +410,7 @@ class TestClaudeAdapterExceptionMapping:
         """anthropic.RateLimitError → ProviderRateLimitError."""
         adapter = _make_adapter()
         mock_client = AsyncMock()
-        mock_client.messages.create.side_effect = AnthropicRateLimitError(
+        mock_client.messages.with_raw_response.create.side_effect = AnthropicRateLimitError(
             message="rate limited",
             response=_mock_response(429),
             body=None,
@@ -280,11 +421,60 @@ class TestClaudeAdapterExceptionMapping:
             await adapter.translate_chunk(_a_chunk())
 
     @pytest.mark.asyncio
+    async def test_rate_limit_extracts_retry_after_ms_header(self) -> None:
+        """429 응답의 retry-after-ms 헤더가 retry_after_seconds 에 초 단위로 노출되어야 한다."""
+        adapter = _make_adapter()
+        mock_client = AsyncMock()
+        response = _mock_response(429)
+        response.headers = {"retry-after-ms": "8500"}
+        mock_client.messages.with_raw_response.create.side_effect = AnthropicRateLimitError(
+            message="rate limited", response=response, body=None
+        )
+        adapter._client = mock_client
+
+        with pytest.raises(ProviderRateLimitError) as exc_info:
+            await adapter.translate_chunk(_a_chunk())
+        assert exc_info.value.retry_after_seconds == pytest.approx(8.5)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_extracts_retry_after_seconds_header(self) -> None:
+        """retry-after-ms 가 없으면 retry-after (초) 헤더로 fallback 해야 한다."""
+        adapter = _make_adapter()
+        mock_client = AsyncMock()
+        response = _mock_response(429)
+        response.headers = {"retry-after": "15"}
+        mock_client.messages.with_raw_response.create.side_effect = AnthropicRateLimitError(
+            message="rate limited", response=response, body=None
+        )
+        adapter._client = mock_client
+
+        with pytest.raises(ProviderRateLimitError) as exc_info:
+            await adapter.translate_chunk(_a_chunk())
+        assert exc_info.value.retry_after_seconds == pytest.approx(15.0)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_no_header_yields_none_hint(self) -> None:
+        """retry-after 헤더가 없으면 retry_after_seconds 는 None 이어야 한다 (fallback 트리거)."""
+        adapter = _make_adapter()
+        mock_client = AsyncMock()
+        # _mock_response(429) 의 기본 headers={} 사용
+        mock_client.messages.with_raw_response.create.side_effect = AnthropicRateLimitError(
+            message="rate limited",
+            response=_mock_response(429),
+            body=None,
+        )
+        adapter._client = mock_client
+
+        with pytest.raises(ProviderRateLimitError) as exc_info:
+            await adapter.translate_chunk(_a_chunk())
+        assert exc_info.value.retry_after_seconds is None
+
+    @pytest.mark.asyncio
     async def test_api_connection_error_maps_to_provider_transient(self) -> None:
         """anthropic.APIConnectionError → ProviderTransientError."""
         adapter = _make_adapter()
         mock_client = AsyncMock()
-        mock_client.messages.create.side_effect = APIConnectionError(
+        mock_client.messages.with_raw_response.create.side_effect = APIConnectionError(
             message="connection error",
             request=_mock_request(),
         )
@@ -298,7 +488,7 @@ class TestClaudeAdapterExceptionMapping:
         """anthropic.APIStatusError(5xx) → ProviderTransientError."""
         adapter = _make_adapter()
         mock_client = AsyncMock()
-        mock_client.messages.create.side_effect = APIStatusError(
+        mock_client.messages.with_raw_response.create.side_effect = APIStatusError(
             message="server error",
             response=_mock_response(503),
             body=None,
@@ -313,7 +503,7 @@ class TestClaudeAdapterExceptionMapping:
         """anthropic.APIStatusError(4xx, 인증 외) → ProviderPermanentError."""
         adapter = _make_adapter()
         mock_client = AsyncMock()
-        mock_client.messages.create.side_effect = APIStatusError(
+        mock_client.messages.with_raw_response.create.side_effect = APIStatusError(
             message="bad request",
             response=_mock_response(422),
             body=None,
@@ -328,7 +518,7 @@ class TestClaudeAdapterExceptionMapping:
         """anthropic.AuthenticationError → ProviderPermanentError."""
         adapter = _make_adapter()
         mock_client = AsyncMock()
-        mock_client.messages.create.side_effect = AuthenticationError(
+        mock_client.messages.with_raw_response.create.side_effect = AuthenticationError(
             message="invalid api key",
             response=_mock_response(401),
             body=None,
@@ -351,7 +541,9 @@ class TestClaudeAdapterExceptionMapping:
 
         mock_response_obj = Mock()
         mock_response_obj.content = [mock_content]
-        mock_client.messages.create.return_value = mock_response_obj
+        mock_client.messages.with_raw_response.create.return_value = _wrap_as_raw(
+            mock_response_obj
+        )
         adapter._client = mock_client
 
         with pytest.raises(ProviderPermanentError):
@@ -369,7 +561,9 @@ class TestClaudeAdapterExceptionMapping:
 
         mock_response_obj = Mock()
         mock_response_obj.content = [mock_content]
-        mock_client.messages.create.return_value = mock_response_obj
+        mock_client.messages.with_raw_response.create.return_value = _wrap_as_raw(
+            mock_response_obj
+        )
         adapter._client = mock_client
 
         with pytest.raises(ProviderPermanentError):
@@ -388,7 +582,9 @@ class TestClaudeAdapterExceptionMapping:
 
         mock_response_obj = Mock()
         mock_response_obj.content = [mock_content]
-        mock_client.messages.create.return_value = mock_response_obj
+        mock_client.messages.with_raw_response.create.return_value = _wrap_as_raw(
+            mock_response_obj
+        )
         adapter._client = mock_client
 
         with pytest.raises(ProviderPermanentError, match="cue 수 불일치"):
@@ -408,7 +604,9 @@ class TestClaudeAdapterExceptionMapping:
 
         mock_response_obj = Mock()
         mock_response_obj.content = [mock_content]
-        mock_client.messages.create.return_value = mock_response_obj
+        mock_client.messages.with_raw_response.create.return_value = _wrap_as_raw(
+            mock_response_obj
+        )
         adapter._client = mock_client
 
         result = await adapter.translate_chunk(_a_chunk())

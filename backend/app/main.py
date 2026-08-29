@@ -12,6 +12,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRouter
@@ -31,9 +32,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     프로세스 종료 시 명시적으로 닫지 않으면 connection leak warning 이 남는다.
     """
     configure_logging()
+    # 헌법 VI — file sink 정상 동작 확인용 startup 이벤트.
+    settings = get_settings()
+    structlog.get_logger(__name__).info(
+        "app.startup",
+        app_env=settings.app_env,
+        log_level=settings.log_level,
+        log_dir=settings.log_dir,
+    )
     try:
         yield
     finally:
+        structlog.get_logger(__name__).info("app.shutdown")
         # SSE 핸들러용 EventBus 싱글턴을 닫는다 (lazy 초기화된 경우에만 동작).
         from app.api.v1.dependencies import shutdown_event_bus
 

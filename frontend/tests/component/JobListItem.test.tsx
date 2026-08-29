@@ -53,6 +53,7 @@ interface JobLite {
   metadata: {
     title: string | null;
     channel: string | null;
+    channel_url: string | null;
     duration_sec: number | null;
     subtitle_source: 'manual' | 'auto' | null;
   };
@@ -71,6 +72,7 @@ function makeJob(overrides: Partial<JobLite> = {}): JobLite {
     metadata: {
       title: '테스트 영상 제목',
       channel: '테스트 채널',
+      channel_url: 'https://www.youtube.com/@test-channel',
       duration_sec: 754,
       subtitle_source: 'manual',
     },
@@ -87,9 +89,20 @@ function makeJob(overrides: Partial<JobLite> = {}): JobLite {
 type JobProp = React.ComponentProps<typeof JobListItem>['job'];
 const asJob = (j: JobLite): JobProp => j as unknown as JobProp;
 
+// 종결 항목은 DeleteJobButton 을 렌더하고, 그 내부의 useDeleteJob 이 QueryClient 를
+// 요구한다. 모든 렌더를 QueryClientProvider 로 감싸기 위한 헬퍼.
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+function renderWithQueryClient(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(React.createElement(QueryClientProvider, { client }, ui));
+}
+
 describe('JobListItem', () => {
   it('제목 / 채널이 표시된다', () => {
-    const { container } = render(
+    const { container } = renderWithQueryClient(
       React.createElement(JobListItem, { job: asJob(makeJob()) }),
     );
     const text = container.textContent ?? '';
@@ -98,7 +111,7 @@ describe('JobListItem', () => {
   });
 
   it('completed 항목은 "재생" CTA 가 한국어로 노출된다', () => {
-    const { container } = render(
+    const { container } = renderWithQueryClient(
       React.createElement(JobListItem, {
         job: asJob(makeJob({ status: 'completed' })),
       }),
@@ -108,7 +121,7 @@ describe('JobListItem', () => {
   });
 
   it('진행 중 항목(translating) 은 진행 상태가 노출되고 상세/보기 CTA 가 있다', () => {
-    const { container } = render(
+    const { container } = renderWithQueryClient(
       React.createElement(JobListItem, {
         job: asJob(makeJob({ status: 'translating', completed_at: null })),
       }),
@@ -121,7 +134,7 @@ describe('JobListItem', () => {
   });
 
   it('failed 항목은 실패 사유와 "상세" CTA 가 한국어로 노출된다', () => {
-    const { container } = render(
+    const { container } = renderWithQueryClient(
       React.createElement(JobListItem, {
         job: asJob(
           makeJob({
@@ -142,7 +155,7 @@ describe('JobListItem', () => {
   });
 
   it('영상 길이가 mm:ss 형태로 표기된다 (12분 34초 → 12:34)', () => {
-    const { container } = render(
+    const { container } = renderWithQueryClient(
       React.createElement(JobListItem, {
         job: asJob(
           makeJob({ metadata: { ...makeJob().metadata, duration_sec: 754 } }),
@@ -151,5 +164,27 @@ describe('JobListItem', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toMatch(/12:34/);
+  });
+
+  // FR-030a — 종결 작업만 삭제 가능.
+  it('completed / failed 항목에는 삭제 버튼이 노출된다', () => {
+    for (const status of ['completed', 'failed'] as const) {
+      const { queryByTestId, unmount } = renderWithQueryClient(
+        React.createElement(JobListItem, {
+          job: asJob(makeJob({ status })),
+        }),
+      );
+      expect(queryByTestId('job-list-item-delete')).not.toBeNull();
+      unmount();
+    }
+  });
+
+  it('진행 중 항목에는 삭제 버튼이 노출되지 않는다 (cancel 후에만 삭제 가능)', () => {
+    const { queryByTestId } = renderWithQueryClient(
+      React.createElement(JobListItem, {
+        job: asJob(makeJob({ status: 'translating', completed_at: null })),
+      }),
+    );
+    expect(queryByTestId('job-list-item-delete')).toBeNull();
   });
 });

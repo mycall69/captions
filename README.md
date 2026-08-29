@@ -13,7 +13,8 @@ YouTube 영상에서 자막을 추출해 한국어 ↔ 일본어로 번역하고
 
 ## 기술 스택
 
-- **Backend**: Python 3.12 · FastAPI · Pydantic v2 · SQLAlchemy 2 (aiosqlite) · Celery · Redis · structlog
+- **Runtime**: Python 3.12 · Node.js 24 LTS (저장소 루트 `.nvmrc` 참고)
+- **Backend**: FastAPI · Pydantic v2 · SQLAlchemy 2 (aiosqlite) · Celery · Redis · structlog
 - **번역 Provider**: Anthropic Claude API (`TranslationProvider` Protocol을 통해 추상화 — ADR 0001)
 - **미디어 처리**: yt-dlp · pysrt · webvtt-py · ffmpeg (`-c copy` remux 전용 — ADR 0002)
 - **Frontend**: Next.js 15 (App Router) · TypeScript strict · Tailwind · shadcn/ui · TanStack Query · Zustand

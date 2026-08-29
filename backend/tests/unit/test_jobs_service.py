@@ -37,6 +37,10 @@ _NOW = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 def _make_job(
     video_id: str = _VIDEO_ID,
     status: JobStatus = JobStatus.pending,
+    *,
+    error_stage: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
 ) -> VideoJob:
     """테스트용 VideoJob을 생성한다."""
     return VideoJob(
@@ -48,6 +52,9 @@ def _make_job(
         created_at=_NOW,
         updated_at=_NOW,
         reused=False,
+        error_stage=error_stage,
+        error_code=error_code,
+        error_message=error_message,
     )
 
 
@@ -154,8 +161,8 @@ class FakeMetadataFetcher:
             exc_cls = self._side_effect
             if exc_cls is VideoTooLongError:
                 raise VideoTooLongError(
-                    "영상 길이가 60분을 초과합니다",
-                    details={"duration_sec": 4000, "max_duration_sec": 3600},
+                    "영상 길이가 120분을 초과합니다",
+                    details={"duration_sec": 8000, "max_duration_sec": 7200},
                 )
             raise exc_cls("fake error")
         return self._metadata
@@ -448,19 +455,33 @@ class TestMarkFailed:
             )
 
     @pytest.mark.asyncio
-    async def test_mark_failed_from_failed_raises(
+    async def test_mark_failed_from_failed_is_idempotent_noop(
         self,
         service: JobsService,
         repo: FakeJobRepository,
     ) -> None:
-        """failed → failed 자기 전이도 불허 → IllegalStateTransitionError."""
-        job = _make_job(status=JobStatus.failed)
-        repo.seed(job)
+        """failed → failed 중복 호출은 멱등 noop — 첫 실패 사유를 보존한다.
 
-        with pytest.raises(IllegalStateTransitionError):
-            await service.mark_failed(
-                job.id,
-                error_stage="retry",
-                error_code="DOWNLOAD_FAILED",
-                error_message="재시도 실패",
-            )
+        chain abort 미흡 / Celery 체인 안에서 후속 link 가 동일 작업에 대해
+        mark_failed 를 재시도하는 케이스에서 noise 없이 안전하게 무시되어야 한다.
+        """
+        first_failure = _make_job(
+            status=JobStatus.failed,
+            error_stage="subtitle_processing",
+            error_code="SUBTITLE_NOT_FOUND",
+            error_message="이 영상에는 한국어 / 일본어 자막이 없습니다.",
+        )
+        repo.seed(first_failure)
+
+        result = await service.mark_failed(
+            first_failure.id,
+            error_stage="translating",
+            error_code="PIPELINE_FAILED",
+            error_message="후속 link 가 잘못된 시점에 호출됨",
+        )
+
+        # 멱등 noop: raise 없이 통과하고 첫 실패 사유가 그대로 보존된다.
+        assert result.status == JobStatus.failed
+        assert result.error_stage == "subtitle_processing"
+        assert result.error_code == "SUBTITLE_NOT_FOUND"
+        assert result.error_message == "이 영상에는 한국어 / 일본어 자막이 없습니다."

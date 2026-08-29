@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import structlog
 
+from app.core.config import get_settings
 from app.core.exceptions import IllegalStateTransitionError
 from app.domain.jobs.models import Lang
 from app.workers.celery_app import celery_app
@@ -31,6 +32,17 @@ from app.workers.tasks._runtime import (
 logger = structlog.get_logger(__name__)
 
 _SUPPORTED_LANGS: tuple[Lang, ...] = ("ko", "ja")
+
+
+def _cookies_args() -> list[str]:
+    """yt-dlp anti-bot 우회 — YT_DLP_COOKIES_BROWSER 가 지정되면 옵션 인자를 반환.
+
+    YouTube 가 "Sign in to confirm you're not a bot" 게이트로 자막 다운로드를
+    차단할 때 로컬 브라우저 쿠키로 인증된 세션을 사용한다 (헌법 IV).
+    값이 비어 있으면 빈 리스트.
+    """
+    browser = get_settings().yt_dlp_cookies_browser.strip()
+    return ["--cookies-from-browser", browser] if browser else []
 
 
 def download_manual_subtitles(
@@ -60,8 +72,11 @@ def download_manual_subtitles(
         "--sub-langs",
         sub_langs_arg,
         "--sub-format",
-        "vtt",
+        "srt/best",
+        "--convert-subs",
+        "srt",
         "--no-playlist",
+        *_cookies_args(),
         "-o",
         output_template,
         url,
@@ -70,7 +85,7 @@ def download_manual_subtitles(
 
     found: list[str] = []
     for lang in languages:
-        candidate = output_dir / f"{youtube_video_id}.{lang}.vtt"
+        candidate = output_dir / f"{youtube_video_id}.{lang}.srt"
         if candidate.exists():
             found.append(str(candidate))
     return found
@@ -103,8 +118,11 @@ def download_auto_subtitles(
         "--sub-langs",
         sub_langs_arg,
         "--sub-format",
-        "vtt",
+        "srt/best",
+        "--convert-subs",
+        "srt",
         "--no-playlist",
+        *_cookies_args(),
         "-o",
         output_template,
         url,
@@ -113,21 +131,21 @@ def download_auto_subtitles(
 
     found: list[str] = []
     for lang in languages:
-        candidate = output_dir / f"{youtube_video_id}.{lang}.vtt"
+        candidate = output_dir / f"{youtube_video_id}.{lang}.srt"
         if candidate.exists():
             found.append(str(candidate))
     return found
 
 
 def _detect_lang(file_path: str, video_id: str) -> Lang | None:
-    """파일 경로에서 언어 코드를 추출한다.
+    """파일 경로에서 언어 코드를 추출한다 (확장자 srt/vtt 모두 지원).
 
-    예: '/tmp/abc/dQw4w9WgXcY.ja.vtt' → 'ja'
+    예: '/tmp/abc/dQw4w9WgXcY.ja.srt' → 'ja', '/tmp/abc/dQw4w9WgXcY.ko.vtt' → 'ko'
     """
-    name = Path(file_path).name  # e.g. 'dQw4w9WgXcY.ja.vtt'
+    name = Path(file_path).name  # e.g. 'dQw4w9WgXcY.ja.srt'
     prefix = f"{video_id}."
     if name.startswith(prefix):
-        rest = name[len(prefix) :]  # 'ja.vtt'
+        rest = name[len(prefix) :]  # 'ja.srt'
         lang_part = rest.split(".")[0]
         if lang_part in _SUPPORTED_LANGS:
             return lang_part
@@ -329,6 +347,15 @@ async def _save_subtitle_track(
 
     normalized = parse_subtitle_file(file_path)
 
+    # FR-013a — yt-dlp 가 --sub-langs ja,ko 로 두 언어 모두 다운로드한 경우
+    # target 언어 자막이 디스크에 함께 떨어진다. 이때 그 파일을 translated 트랙으로
+    # 함께 등록하면 후속 translate_task 가 LLM 호출 없이 즉시 skip 한다.
+    target_path: Path | None = None
+    for p in found_paths[1:]:
+        if _detect_lang(p, video_id) == target_lang:
+            target_path = Path(p)
+            break
+
     async with task_session() as session:
         srepo = subtitle_repo(session)
         jservice = JobsService(jobs_repo(session))
@@ -348,6 +375,30 @@ async def _save_subtitle_track(
             cues=normalized,
         )
         await srepo.save_track(track)
+
+        if target_path is not None:
+            target_normalized = parse_subtitle_file(target_path)
+            target_suffix = target_path.suffix.lower().lstrip(".")
+            target_format_val = target_suffix if target_suffix in ("srt", "vtt") else "vtt"
+            target_track = SubtitleTrack(
+                id=new_ulid(),
+                job_id=job_id,
+                kind="translated",
+                language=target_lang,
+                origin=subtitle_source,  # 'manual'/'auto' — embedded 임을 보존
+                source_format=target_format_val,
+                file_path=str(target_path),
+                cue_count=len(target_normalized),
+                cues=target_normalized,
+            )
+            await srepo.save_track(target_track)
+            logger.info(
+                "worker.extract.embedded_target_saved",
+                job_id=job_id,
+                target_lang=target_lang,
+                cues=len(target_normalized),
+                origin=subtitle_source,
+            )
 
         # subtitle_processing 단계 종료를 알리는 progress=1.0 이벤트 발행
         from app.domain.jobs.states import JobStatus

@@ -23,7 +23,6 @@ from app.domain.subtitles.dual_generator import (  # noqa: E402  # type: ignore[
     generate_dual_srt,
     generate_dual_vtt,
 )
-
 from app.domain.translation.provider import ChunkCue  # noqa: E402
 
 

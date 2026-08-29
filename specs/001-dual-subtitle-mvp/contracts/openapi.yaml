@@ -95,21 +95,49 @@ paths:
           $ref: "#/components/responses/NotFound"
     delete:
       tags: [jobs]
-      summary: 작업 취소
+      summary: 작업 취소 또는 영구 삭제
       description: |
-        진행 중 작업을 취소한다. 종결 상태(`completed` / `failed`) 작업에 대해서는
-        409를 반환한다.
-      operationId: cancelJob
+        상태에 따라 분기 동작한다 — 클라이언트는 분기 처리 불필요.
+
+        - **진행 중** (`pending`, `downloading`, `subtitle_processing`,
+          `translating`, `rendering`): cancel 시맨틱 — `failed` / `USER_CANCELLED`
+          마킹 + `var/storage/<job_id>/` 산출물 purge. DB row 는 보존.
+          spec FR-028 (Clarifications 2026-05-27).
+        - **종결** (`completed`, `failed`): hard delete — storage purge + DB row
+          영구 제거 (cascade 로 SubtitleTrack / Cue / Asset / JobEvent 등 함께 제거).
+          spec FR-030a (Clarifications 2026-05-28).
+
+        응답 envelope `data.action` 으로 어떤 동작이 일어났는지 구분 (`cancelled` |
+        `deleted`). 그 외 `data` 키는 VideoJob 필드와 동일.
+      operationId: cancelOrDeleteJob
       responses:
         "200":
-          description: 취소 처리됨
+          description: 취소 또는 삭제 처리됨
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/JobEnvelope" }
+              schema: { $ref: "#/components/schemas/JobActionEnvelope" }
+              examples:
+                cancelled:
+                  summary: 진행 중 작업을 취소
+                  value:
+                    success: true
+                    data:
+                      id: 01HX2T0000000000000000000C
+                      status: failed
+                      error_code: USER_CANCELLED
+                      action: cancelled
+                    request_id: 01HX2T0000000000000000000D
+                deleted:
+                  summary: 종결 작업을 영구 삭제
+                  value:
+                    success: true
+                    data:
+                      id: 01HX2T0000000000000000000E
+                      status: completed
+                      action: deleted
+                    request_id: 01HX2T0000000000000000000F
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
 
   /jobs/{job_id}/subtitles:
     parameters:
@@ -252,15 +280,15 @@ components:
                   message: 유효한 YouTube 영상 URL이 아닙니다.
                 request_id: 01HX2T0000000000000000000A
             video_too_long:
-              summary: 영상 길이가 60분(3600초)을 초과
+              summary: 영상 길이가 120분(7200초)을 초과
               value:
                 success: false
                 error:
                   code: INVALID_INPUT
-                  message: "영상 길이가 60분을 초과합니다 (실제: 4523초). 60분 이하 영상만 처리 가능합니다."
+                  message: "영상 길이가 120분을 초과합니다 (실제: 8123초). 120분 이하 영상만 처리 가능합니다."
                   details:
-                    duration_sec: 4523
-                    max_duration_sec: 3600
+                    duration_sec: 8123
+                    max_duration_sec: 7200
                 request_id: 01HX2T0000000000000000000B
     NotFound:
       description: 리소스 없음
@@ -312,12 +340,18 @@ components:
       properties:
         title: { type: string, nullable: true }
         channel: { type: string, nullable: true }
+        channel_url:
+          type: string
+          format: uri
+          nullable: true
+          description: YouTube 채널 페이지 URL — UI 채널명 링크에 사용
+          example: https://www.youtube.com/@example
         duration_sec: { type: integer, nullable: true }
         subtitle_source:
           type: string
           enum: [manual, auto]
           nullable: true
-      required: [title, channel, duration_sec, subtitle_source]
+      required: [title, channel, channel_url, duration_sec, subtitle_source]
 
     Job:
       type: object
@@ -364,6 +398,32 @@ components:
       properties:
         success: { type: boolean }
         data: { $ref: "#/components/schemas/Job" }
+        error: { $ref: "#/components/schemas/ErrorBody" }
+        request_id: { type: string }
+
+    JobAction:
+      type: string
+      enum: [cancelled, deleted]
+      description: |
+        DELETE /jobs/{job_id} 응답에서 어떤 동작이 일어났는지 표시.
+        - cancelled: 진행 중 작업이 USER_CANCELLED 로 마킹됨 (DB row 보존)
+        - deleted:   종결 작업이 영구 삭제됨 (DB row + 산출물 제거)
+
+    JobActionEnvelope:
+      type: object
+      required: [success, request_id]
+      description: |
+        DELETE /jobs/{job_id} 전용 envelope. data 는 VideoJob 필드 + action 을 포함한다
+        (backward compatible — 기존 JobEnvelope 호출자도 status / id 등을 그대로 사용 가능).
+      properties:
+        success: { type: boolean }
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Job"
+            - type: object
+              required: [action]
+              properties:
+                action: { $ref: "#/components/schemas/JobAction" }
         error: { $ref: "#/components/schemas/ErrorBody" }
         request_id: { type: string }
 

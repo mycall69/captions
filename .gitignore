@@ -20,6 +20,8 @@ frontend/test-results/
 
 # Runtime
 var/
+logs/*
+!logs/.gitkeep
 .env
 .env.local
 

@@ -35,6 +35,7 @@ test.describe('US2: 작업 진행 상황 실시간 가시화 (P2 acceptance)', (
               metadata: {
                 title: 'Test Video',
                 channel: 'Test Channel',
+                channel_url: 'https://www.youtube.com/@test-channel',
                 duration_sec: 120,
                 subtitle_source: 'manual',
               },
@@ -115,6 +116,7 @@ test.describe('US2: 작업 진행 상황 실시간 가시화 (P2 acceptance)', (
               metadata: {
                 title: 'Test Video',
                 channel: 'Test Channel',
+                channel_url: 'https://www.youtube.com/@test-channel',
                 duration_sec: 120,
                 subtitle_source: null,
               },

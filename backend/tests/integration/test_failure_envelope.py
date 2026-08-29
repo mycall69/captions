@@ -159,7 +159,7 @@ class TestInvalidInputEnvelope:
         import app.api.v1.routes.jobs as _routes
 
         async def _fake_fetch_duration(_url: str) -> int:
-            return 3601  # 60분 + 1초
+            return 7201  # 120분 + 1초
 
         monkeypatch.setattr(_routes, "fetch_video_duration", _fake_fetch_duration, raising=False)
 

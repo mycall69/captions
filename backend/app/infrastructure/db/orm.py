@@ -67,6 +67,7 @@ class VideoJob(Base):
     # yt-dlp 메타데이터
     video_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_channel: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_channel_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # subtitle_source 허용 값: manual | auto

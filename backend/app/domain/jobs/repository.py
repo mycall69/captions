@@ -88,3 +88,15 @@ class JobRepository(Protocol):
         자막 추출 완료 후 언어 정보가 확정되는 시점에 호출된다.
         """
         ...
+
+    async def delete(self, job_id: str) -> None:
+        """job_id 의 video_job 행을 삭제한다.
+
+        ORM relationship 의 cascade="all, delete-orphan" 설정에 의해 관련
+        SubtitleTrack / SubtitleCue / TranslationTask / RenderTask / VideoAsset /
+        JobEvent 까지 함께 제거된다(orm.py video_job relationships).
+
+        본 메서드는 상태 검증을 수행하지 않으며 호출자가 종결 상태 여부를 보장한다
+        (FR-030a — JobsService.delete_terminal 에서 검증).
+        """
+        ...

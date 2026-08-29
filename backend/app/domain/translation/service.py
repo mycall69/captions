@@ -99,7 +99,13 @@ class TranslationService:
                 last_exc = exc
                 if attempt >= len(RETRY_DELAYS):
                     break
-                await asyncio.sleep(RETRY_DELAYS[attempt])
+                # ProviderRateLimitError 가 retry_after_seconds 를 노출한 경우
+                # (Anthropic 429 의 retry-after/retry-after-ms 헤더 추출분) 해당
+                # 값을 우선 사용해 분당 한도 회복 윈도우만큼 정확히 대기한다.
+                # 그렇지 않으면 RETRY_DELAYS 의 exponential backoff 로 fallback.
+                hinted: float | None = getattr(exc, "retry_after_seconds", None)
+                delay = hinted if hinted is not None and hinted > 0 else RETRY_DELAYS[attempt]
+                await asyncio.sleep(delay)
             except ProviderPermanentError:
                 raise
 

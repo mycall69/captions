@@ -6,9 +6,9 @@ var/storage/<job_id>/ 하위에 job별 디렉터리를 생성·관리한다.
 디렉터리 구조:
     var/storage/
     └── <job_id>/
-        ├── video.mp4          # 다운로드된 원본 영상
-        ├── source.ja.vtt      # 원본 자막 (예시)
-        ├── translated.ko.vtt  # 번역 자막
+        ├── <youtube_id>.mp4   # 다운로드된 원본 영상 (자막 파일과 prefix 동일)
+        ├── <youtube_id>.ja.srt # 원본 자막 (예시, yt-dlp --convert-subs srt 결과)
+        ├── <youtube_id>.ko.srt # target 자막 (영상에 임베디드된 경우)
         ├── dual.srt           # dual subtitle SRT
         ├── dual.vtt           # dual subtitle VTT
         └── tmp/               # 처리 중 임시 파일 (완료 후 삭제)
@@ -71,16 +71,24 @@ class JobStorage:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def video_path(self, job_id: str) -> Path:
+    def video_path(self, job_id: str, youtube_video_id: str | None = None) -> Path:
         """다운로드된 원본 영상 파일 경로를 반환한다.
+
+        파일명은 ``<youtube_video_id>.mp4`` 규약을 따른다 (자막 파일과 동일 prefix).
+        ``youtube_video_id`` 가 주어지지 않으면 ``video.mp4`` 로 fallback —
+        멱등성 호환을 위해 유지 (호출자가 video_id 를 모르는 케이스 / 레거시).
 
         Args:
             job_id: 작업 식별자.
+            youtube_video_id: 영상 ID. 주어지면 ``<id>.mp4`` 로 저장 위치 결정.
 
         Returns:
-            video.mp4 파일 경로 (파일이 없을 수도 있음).
+            영상 파일 경로 (파일이 없을 수도 있음).
         """
-        return sanitize_path(self.job_dir(job_id), "video.mp4")
+        filename = (
+            f"{youtube_video_id}.mp4" if youtube_video_id else "video.mp4"
+        )
+        return sanitize_path(self.job_dir(job_id), filename)
 
     def subtitle_path(self, job_id: str, name: str) -> Path:
         """자막 파일 경로를 반환한다.

@@ -30,7 +30,6 @@ from app.domain.subtitles.dual_generator import (
 from app.domain.subtitles.normalize import (
     normalize_srt,  # noqa: E402  # type: ignore[reportMissingImports]
 )
-
 from app.domain.translation.provider import ChunkCue  # noqa: E402
 
 pytestmark = pytest.mark.media

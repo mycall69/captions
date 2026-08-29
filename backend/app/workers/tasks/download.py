@@ -16,6 +16,7 @@ from typing import Any
 
 import structlog
 
+from app.core.config import get_settings
 from app.core.exceptions import IllegalStateTransitionError
 from app.infrastructure.storage.filesystem import JobStorage
 from app.workers.celery_app import celery_app
@@ -50,12 +51,19 @@ def _run_yt_dlp(
         raise subprocess.CalledProcessError(1, ["yt-dlp"], stderr=b"yt-dlp not found")
 
     url = f"https://www.youtube.com/watch?v={youtube_video_id}"
+    # yt-dlp anti-bot 우회 — settings.yt_dlp_cookies_browser 가 지정되면
+    # 로컬 브라우저 쿠키로 인증된 세션으로 호출 (헌법 IV, 로컬 호스트 전제).
+    cookies_browser = get_settings().yt_dlp_cookies_browser.strip()
+    cookies_args: list[str] = (
+        ["--cookies-from-browser", cookies_browser] if cookies_browser else []
+    )
     args: list[str] = [
         yt_dlp,
         "-f",
         YTDLP_FORMAT,
         "--no-playlist",
         "--restrict-filenames",
+        *cookies_args,
         "-o",
         output_path,
         url,
@@ -134,15 +142,14 @@ def _execute_sync(job_id: str) -> str:
     3. DB 상태를 갱신하고 자산을 등록한다 (best-effort).
     """
     store = JobStorage()
-    output_path = store.video_path(job_id)
+    # 영상 ID 를 알아야 파일명을 <video_id>.mp4 로 결정할 수 있다. DB 조회 실패 시
+    # job_id 를 fallback 으로 사용 (테스트 호환). 같은 인자로 yt-dlp 도 호출.
+    video_id = _get_video_id_sync(job_id) or job_id
+    output_path = store.video_path(job_id, youtube_video_id=video_id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 멱등성: 이미 파일이 존재하면 재다운로드 건너뜀
     if not output_path.exists():
-        # job_id를 직접 youtube_video_id로 사용하는 것이 아니라
-        # DB에서 job을 조회해야 하나, 여기서는 파일 다운로드가 주목적.
-        # 실제 영상 ID는 DB에 있으므로, 없으면 job_id 자체를 ID로 사용 (테스트 호환).
-        video_id = _get_video_id_sync(job_id) or job_id
         _run_yt_dlp(
             youtube_video_id=video_id,
             output_path=str(output_path),

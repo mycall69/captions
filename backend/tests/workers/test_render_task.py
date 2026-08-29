@@ -20,9 +20,8 @@ pytest.importorskip(
     reason="awaiting Phase 3b implementation — app.workers.tasks.render",
 )
 
-from app.workers.tasks.render import render_task  # noqa: E402  # type: ignore[reportMissingImports]
-
 from app.core.ids import new_job_id  # noqa: E402
+from app.workers.tasks.render import render_task  # noqa: E402  # type: ignore[reportMissingImports]
 
 pytestmark = pytest.mark.workers
 

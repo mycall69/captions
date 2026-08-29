@@ -96,17 +96,23 @@ class TestTmpDir:
 class TestVideoPaths:
     """video_path() 메서드 테스트."""
 
-    def test_video_path_name(self, tmp_path: Path) -> None:
-        """video_path()는 video.mp4 파일 경로를 반환해야 한다."""
+    def test_video_path_name_fallback(self, tmp_path: Path) -> None:
+        """youtube_video_id 미지정 시 video.mp4 fallback 을 유지해야 한다 (레거시 호환)."""
         storage = JobStorage(root=tmp_path)
         path = storage.video_path("01JTEST00000000001")
         assert path.name == "video.mp4"
+
+    def test_video_path_uses_youtube_id(self, tmp_path: Path) -> None:
+        """youtube_video_id 가 주어지면 <id>.mp4 파일명을 사용해야 한다."""
+        storage = JobStorage(root=tmp_path)
+        path = storage.video_path("01JTEST00000000001", youtube_video_id="4EeTnIV05j4")
+        assert path.name == "4EeTnIV05j4.mp4"
 
     def test_video_path_inside_job_dir(self, tmp_path: Path) -> None:
         """video_path()는 job_dir 하위 경로여야 한다."""
         storage = JobStorage(root=tmp_path)
         job_dir = storage.job_dir("01JTEST00000000001")
-        path = storage.video_path("01JTEST00000000001")
+        path = storage.video_path("01JTEST00000000001", youtube_video_id="abcdefghijk")
         assert str(path).startswith(str(job_dir))
 
 

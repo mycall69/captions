@@ -35,15 +35,16 @@ pytest.importorskip(
     reason="awaiting T103 implementation — jobs cancel 라우터 배선",
 )
 
-# T103: DELETE handler 가 jobs 라우터에 노출되기 전까지 전체 모듈을 skip 한다.
-# cancel_job / delete_job 중 어느 한 이름이라도 노출되면 활성화된다.
+# T103 / FR-030a: DELETE handler 가 jobs 라우터에 노출되기 전까지 전체 모듈을 skip 한다.
+# cancel_job / delete_job / cancel_or_delete_job 중 어느 이름이라도 노출되면 활성화.
 import app.api.v1.routes.jobs as _jobs_routes  # noqa: E402
 
 if not any(
-    hasattr(_jobs_routes, name) for name in ("cancel_job", "delete_job")
+    hasattr(_jobs_routes, name)
+    for name in ("cancel_job", "delete_job", "cancel_or_delete_job")
 ):
     pytest.skip(
-        "awaiting T103 implementation — cancel_job 핸들러 미정의",
+        "awaiting T103 implementation — DELETE 핸들러 미정의",
         allow_module_level=True,
     )
 
@@ -218,52 +219,70 @@ class TestCancelInProgressJob:
 # ── 2. 종결 작업 취소 → 409 ──────────────────────────────────────────────────
 
 
-class TestCancelTerminalJobReturns409:
-    """completed / failed 작업 cancel → 409."""
+class TestDeleteTerminalJobHardDeletes:
+    """completed / failed 작업 DELETE → hard delete (FR-030a, Clarifications 2026-05-28).
 
-    async def test_completed_job_cancel_returns_409(
+    이전 계약(완료 작업 DELETE → 409)은 spec iteration 으로 변경되었다.
+    이제 종결 작업 DELETE 는 200 + action="deleted" + DB row 제거.
+    """
+
+    async def test_completed_job_delete_returns_200_deleted(
         self,
         cancel_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
-        """completed 작업 DELETE → 409."""
+        """completed 작업 DELETE → 200 + action=deleted."""
         job_id = await _create_job(cancel_client)
         await _advance_status(db_session, job_id, JobStatus.completed)
 
         resp = await cancel_client.delete(f"/v1/jobs/{job_id}")
-        assert resp.status_code == 409
-
-    async def test_completed_job_cancel_error_code_is_illegal_state(
-        self,
-        cancel_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """409 응답의 error.code 는 ILLEGAL_STATE / INVALID_STATE / JOB_NOT_READY 중 하나."""
-        job_id = await _create_job(cancel_client)
-        await _advance_status(db_session, job_id, JobStatus.completed)
-
-        resp = await cancel_client.delete(f"/v1/jobs/{job_id}")
+        assert resp.status_code == 200
         body = resp.json()
-        assert body["success"] is False
-        assert body["error"]["code"] in _TERMINAL_ERROR_CODES, (
-            f"unexpected error code: {body['error']['code']}"
-        )
+        assert body["success"] is True
+        assert body["data"]["action"] == "deleted"
+        # 응답에는 삭제 직전 스냅샷 (id 등) 이 포함된다.
+        assert body["data"]["id"] == job_id
 
-    async def test_already_failed_job_cancel_returns_409(
+    async def test_completed_job_delete_removes_db_row(
+        self,
+        cancel_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """hard delete 후 동일 job_id 재조회는 404."""
+        job_id = await _create_job(cancel_client)
+        await _advance_status(db_session, job_id, JobStatus.completed)
+
+        delete_resp = await cancel_client.delete(f"/v1/jobs/{job_id}")
+        assert delete_resp.status_code == 200
+
+        follow_up = await cancel_client.get(f"/v1/jobs/{job_id}")
+        assert follow_up.status_code == 404
+        assert follow_up.json()["error"]["code"] == "NOT_FOUND"
+
+    async def test_already_failed_job_delete_returns_200_deleted(
         self,
         cancel_client: AsyncClient,
     ) -> None:
-        """failed 상태에서 또 cancel 시도 시 409 — 이중 취소 방지."""
+        """failed 상태에서 DELETE → hard delete (이전엔 409 였음).
+
+        첫 DELETE 가 진행 중 작업을 cancel 하여 failed 로 만들고, 두 번째 DELETE 는
+        종결 상태이므로 hard delete 경로로 진입한다.
+        """
         job_id = await _create_job(cancel_client)
 
-        # 첫 번째 cancel
+        # 첫 번째: 진행 중 작업 → cancel (action="cancelled", failed 로 마킹)
         first = await cancel_client.delete(f"/v1/jobs/{job_id}")
         assert first.status_code == 200
+        assert first.json()["data"]["action"] == "cancelled"
 
-        # 두 번째 cancel 은 409
+        # 두 번째: 이제 failed → hard delete (action="deleted")
         second = await cancel_client.delete(f"/v1/jobs/{job_id}")
-        assert second.status_code == 409
-        assert second.json()["error"]["code"] in _TERMINAL_ERROR_CODES
+        assert second.status_code == 200
+        assert second.json()["data"]["action"] == "deleted"
+
+        # row 가 사라졌으므로 세 번째 DELETE 는 404
+        third = await cancel_client.delete(f"/v1/jobs/{job_id}")
+        assert third.status_code == 404
 
 
 # ── 3. 존재하지 않는 작업 ─────────────────────────────────────────────────────

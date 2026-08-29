@@ -137,10 +137,26 @@ class TranslationProvider(Protocol):
 # ── Provider 예외 ──────────────────────────────────────────────────────────────
 
 class ProviderRateLimitError(TranslationFailedError):
-    """번역 Provider rate limit 초과 — 대기 후 재시도 가능."""
+    """번역 Provider rate limit 초과 — 대기 후 재시도 가능.
+
+    Provider가 429 응답의 ``retry-after``/``retry-after-ms`` 헤더를 노출한 경우
+    ``retry_after_seconds`` 에 양수 초 값을 담아 전달한다. 서비스 레이어
+    (TranslationService._call_with_retry)는 이 값을 우선 사용해 분당 한도
+    회복 윈도우만큼 정확히 대기한다.
+    """
 
     code = "PROVIDER_RATE_LIMITED"
     http_status = 429
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_seconds: float | None = None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message, details=details)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class ProviderTransientError(TranslationFailedError):

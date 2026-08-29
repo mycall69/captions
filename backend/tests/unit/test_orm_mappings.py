@@ -65,8 +65,9 @@ class TestVideoJobColumns:
         expected_cols = {
             "id", "source_url", "youtube_video_id", "source_language",
             "target_language", "status", "error_stage", "error_message",
-            "error_code", "video_title", "video_channel", "video_duration_sec",
-            "subtitle_source", "created_at", "updated_at", "completed_at",
+            "error_code", "video_title", "video_channel", "video_channel_url",
+            "video_duration_sec", "subtitle_source", "created_at",
+            "updated_at", "completed_at",
         }
         actual_cols = set(table.c.keys())
         assert expected_cols == actual_cols

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
+import structlog
 from anthropic import AsyncAnthropic
 from anthropic import RateLimitError as AnthropicRateLimitError
 from anthropic._exceptions import (
@@ -36,12 +38,111 @@ from app.domain.translation.provider import (
     TranslationChunk,
 )
 
+logger = structlog.get_logger(__name__)
+
+# 운영 디버깅에 가치 있는 anthropic 응답 헤더만 선별 로깅 (rate limit 진단용).
+_RATE_LIMIT_HEADER_PREFIXES = ("anthropic-ratelimit-",)
+_RATE_LIMIT_HEADER_KEYS = frozenset(
+    {
+        "retry-after",
+        "retry-after-ms",
+        "request-id",
+        "anthropic-organization-id",
+        "anthropic-version",
+    }
+)
+# Authorization/x-api-key 등 시크릿 헤더는 값을 redact 한 사본으로 로그.
+_SENSITIVE_HEADER_KEYS = frozenset(
+    {"authorization", "x-api-key", "cookie", "set-cookie"}
+)
+_HEADER_MASK = "***REDACTED***"
+
+
+def _redact_headers(headers: Any) -> dict[str, str]:
+    """헤더 객체를 dict 로 변환하면서 시크릿 헤더 값을 마스킹한다.
+
+    anthropic SDK 는 raw response 의 헤더를 ``httpx.Headers`` 로 노출한다.
+    structlog 의 마스킹 processor 는 정확 일치 키만 처리하므로, ``x-api-key`` 같이
+    하이픈을 포함한 헤더는 본 함수에서 명시적으로 redact 한 뒤 로깅한다.
+    """
+    if headers is None:
+        return {}
+    try:
+        items = dict(headers).items()
+    except (TypeError, ValueError):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in items:
+        kl = str(k).lower()
+        out[kl] = _HEADER_MASK if kl in _SENSITIVE_HEADER_KEYS else str(v)
+    return out
+
+
+def _select_rate_limit_headers(headers_dict: dict[str, str]) -> dict[str, str]:
+    """anthropic rate limit / 진단 헤더만 선별한다 (debug 로그 부하 절감)."""
+    out: dict[str, str] = {}
+    for k, v in headers_dict.items():
+        if k in _RATE_LIMIT_HEADER_KEYS or any(
+            k.startswith(p) for p in _RATE_LIMIT_HEADER_PREFIXES
+        ):
+            out[k] = v
+    return out
+
 # ── 어조 추론 정규식 ─────────────────────────────────────────────────────────────
 
 _KO_POLITE_RE = re.compile(r"[가-힣]+니다\b|(십시오|세요|어요|예요|네요)\b")
 _KO_PLAIN_RE = re.compile(r"(한다|이다|있다|없다|간다|온다|먹는다)\b")
 _JA_POLITE_RE = re.compile(r"(です|ます|でした|ました|でしょう|ましょう)")
 _JA_PLAIN_RE = re.compile(r"(だ。|である|だった|していた)")
+
+
+def _log_response_headers(headers: Any, *, status: str, model: str) -> None:
+    """anthropic 응답 헤더에서 rate limit 진단 정보를 debug 레벨로 기록한다.
+
+    LOG_LEVEL=DEBUG 일 때만 logs/backend/app.log 에 적재된다 (운영 기본은 INFO).
+    """
+    redacted = _redact_headers(headers)
+    rate_only = _select_rate_limit_headers(redacted)
+    logger.debug(
+        "claude.api.response_headers",
+        status=status,
+        model=model,
+        **rate_only,
+    )
+
+
+def _log_exception_headers(exc: APIError, *, status: str, model: str) -> None:
+    """anthropic 예외 객체에 노출된 response 헤더를 같은 형식으로 기록한다."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if headers is None:
+        return
+    _log_response_headers(headers, status=status, model=model)
+
+
+def _extract_retry_after_seconds(exc: AnthropicRateLimitError) -> float | None:
+    """anthropic 429 응답의 retry-after 헤더를 초 단위 float 로 추출한다.
+
+    우선순위: ``retry-after-ms`` (밀리초) → ``retry-after`` (초). 둘 다 없거나
+    파싱 실패면 None 을 반환해 호출자가 자체 backoff 정책으로 fallback 한다.
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if not headers:
+        return None
+    raw_ms = headers.get("retry-after-ms") or headers.get("Retry-After-Ms")
+    if raw_ms is not None:
+        try:
+            return max(0.0, float(raw_ms) / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    raw_s = headers.get("retry-after") or headers.get("Retry-After")
+    if raw_s is not None:
+        try:
+            return max(0.0, float(raw_s))
+        except (TypeError, ValueError):
+            pass
+    return None
 
 
 def _infer_register(lang: str, cues_text: list[str]) -> str:
@@ -134,18 +235,39 @@ class ClaudeTranslationAdapter:
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str = "",
+        oauth_token: str = "",
         model: str,
         provider_id: str = "claude:premium-seat",
     ) -> None:
         """어댑터를 초기화한다.
 
         Args:
-            api_key: Anthropic API 키.
+            api_key: Anthropic API 키 (`x-api-key` 헤더로 전송).
+            oauth_token: Claude Code OAuth 토큰 (`Authorization: Bearer` 헤더로 전송).
+                값이 있으면 api_key보다 우선한다. 둘 다 비어 있으면 ValueError.
             model: 호출할 Claude 모델 이름 (예: 'claude-opus-4-7-20250514').
             provider_id: TranslatedChunk.provider_id 에 기록되는 식별자.
+
+        Raises:
+            ValueError: api_key와 oauth_token이 모두 비어 있을 때.
         """
-        self._client = AsyncAnthropic(api_key=api_key)
+        # max_retries=0 — SDK 자체 retry 비활성화. 429/5xx 재시도는 Celery
+        # translate_task (FR-015: 1s/2s/4s/8s backoff) 단일 계층에 위임한다.
+        # SDK 내부 retry 가 활성화되면 한 번의 _execute 동안 0.4~0.9s 간격으로
+        # 다발성 호출이 발생해 Anthropic rate limit 회복 윈도우를 잠식하고,
+        # Celery countdown 의도를 무효화한다.
+        if oauth_token:
+            self._client = AsyncAnthropic(
+                auth_token=oauth_token, api_key=None, max_retries=0
+            )
+        elif api_key:
+            self._client = AsyncAnthropic(api_key=api_key, max_retries=0)
+        else:
+            raise ValueError(
+                "Claude 인증 정보가 없습니다: ANTHROPIC_API_KEY 또는 "
+                "CLAUDE_CODE_OAUTH_TOKEN 중 하나는 설정되어야 합니다."
+            )
         self._model = model
         self._provider_id = provider_id
 
@@ -164,26 +286,48 @@ class ClaudeTranslationAdapter:
             ProviderPermanentError: 인증 실패, 잘못된 요청, 응답 파싱 실패 등 복구 불가 오류.
         """
         system, user = _build_prompt(chunk)
+        # 호출 진입 시 의도(요청 메타)를 debug 로 남긴다 — request 헤더 자체는
+        # SDK 내부에서 조립되므로 외부에서 직접 접근하지 않고 모델/길이 정도만 기록.
+        logger.debug(
+            "claude.api.request",
+            model=self._model,
+            max_tokens=4096,
+            source_lang=chunk.source_lang,
+            target_lang=chunk.target_lang,
+            cue_count=len(chunk.cues),
+            user_payload_chars=len(user),
+        )
         try:
-            response = await self._client.messages.create(
+            # with_raw_response — 응답 헤더(anthropic-ratelimit-*, retry-after, request-id)
+            # 에 접근하기 위해 raw API 사용. parse() 로 기존 Message 객체와 동일하게 처리.
+            raw = await self._client.messages.with_raw_response.create(
                 model=self._model,
                 max_tokens=4096,
-                temperature=0.0,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
         except AnthropicRateLimitError as exc:
-            raise ProviderRateLimitError("Claude rate limit 초과") from exc
+            _log_exception_headers(exc, status="rate_limited", model=self._model)
+            raise ProviderRateLimitError(
+                "Claude rate limit 초과",
+                retry_after_seconds=_extract_retry_after_seconds(exc),
+            ) from exc
         except APIConnectionError as exc:
             raise ProviderTransientError("Claude 연결 오류") from exc
         except (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError) as exc:
+            _log_exception_headers(exc, status="permanent_error", model=self._model)
             raise ProviderPermanentError(f"Claude 영구 오류: {type(exc).__name__}") from exc
         except APIStatusError as exc:
+            _log_exception_headers(exc, status=f"http_{exc.status_code}", model=self._model)
             if 500 <= exc.status_code < 600:
                 raise ProviderTransientError(f"Claude 5xx 오류: {exc.status_code}") from exc
             raise ProviderPermanentError(f"Claude {exc.status_code} 오류") from exc
         except APIError as exc:
             raise ProviderTransientError("Claude API 오류") from exc
+
+        # 정상 응답 — 헤더에서 rate limit 잔여 정보 등 debug 로깅 후 parse().
+        _log_response_headers(raw.headers, status="ok", model=self._model)
+        response = raw.parse()
 
         # 응답 파싱
         text_block = response.content[0]

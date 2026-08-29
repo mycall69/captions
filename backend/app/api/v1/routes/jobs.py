@@ -2,8 +2,9 @@
 
 T077: POST /v1/jobs — URL 검증 → create_or_reuse → Celery 체인 디스패치 → 201/200 응답
 T078: GET /v1/jobs/{job_id} — 작업 조회 → 200 응답
-T103: DELETE /v1/jobs/{job_id} — 진행 중 작업 취소 + 부분 산출물 디렉터리 삭제
-       (spec Clarifications Q3 / FR-028)
+T103: DELETE /v1/jobs/{job_id} — 작업 취소 또는 영구 삭제.
+       진행 중 → cancel (FR-028, USER_CANCELLED 마킹, DB row 보존).
+       종결(completed/failed) → hard delete (FR-030a, storage + DB row 영구 제거).
 T115: GET /v1/jobs — 최근 작업 목록 (cursor 페이지네이션, status 필터, US3)
 
 module-level 훅:
@@ -24,7 +25,7 @@ from app.api.v1.dependencies import SubscribableBus, db_session, event_bus, jobs
 from app.api.v1.envelope import success_envelope
 from app.api.v1.schemas.jobs import CreateJobRequest
 from app.core.config import get_settings
-from app.core.exceptions import IllegalStateTransitionError, InvalidInputError
+from app.core.exceptions import InvalidInputError
 from app.domain.events.publisher import JobEventPublisher
 from app.domain.jobs.service import JobsService
 from app.domain.jobs.states import TERMINAL_STATUSES, JobStatus
@@ -36,7 +37,7 @@ router = APIRouter()
 
 # ── 테스트 monkeypatch 훅 ─────────────────────────────────────────────────────
 
-_MAX_DURATION_SEC = 3600  # 60분
+_MAX_DURATION_SEC = 7200  # 120분 (spec Clarifications 2026-05-28)
 
 
 async def fetch_video_duration(url: str) -> int | None:
@@ -78,7 +79,7 @@ async def create_job(
     duration = await fetch_video_duration(payload.url)
     if duration is not None and duration > _MAX_DURATION_SEC:
         raise InvalidInputError(
-            f"영상 길이가 60분을 초과합니다 (실제: {duration}초)",
+            f"영상 길이가 120분을 초과합니다 (실제: {duration}초)",
             details={"duration_sec": duration, "max_duration_sec": _MAX_DURATION_SEC},
         )
 
@@ -167,53 +168,59 @@ def _purge_job_storage(job_id: str) -> None:
 
 
 @router.delete("/jobs/{job_id}")
-async def cancel_job(
+async def cancel_or_delete_job(
     job_id: str,
     request: Request,
     service: JobsService = Depends(jobs_service),  # noqa: B008
     session: AsyncSession = Depends(db_session),  # noqa: B008
     bus: SubscribableBus = Depends(event_bus),  # noqa: B008
 ) -> dict[str, object]:
-    """DELETE /v1/jobs/{job_id} — 진행 중 작업을 취소한다.
+    """DELETE /v1/jobs/{job_id} — 작업 취소 또는 영구 삭제.
 
-    동작 (spec Clarifications Q3 / FR-028):
+    상태별 분기 (단일 엔드포인트로 클라이언트가 분기 처리 불필요):
 
-    1. 작업 존재 확인 — 없으면 404.
-    2. 종결 상태(completed/failed) 작업이면 409 ILLEGAL_STATE.
-    3. 그렇지 않으면 ``failed`` 로 전이 + ``error_code=USER_CANCELLED`` 기록.
-    4. ``job.failed`` SSE 이벤트를 발행한다 (events.md §이벤트 타입 — 클라이언트가
-       종결을 학습하기 위해 필요. Last-Event-ID replay 경로도 포함).
-    5. ``var/storage/<job_id>/`` 디렉터리를 완전 삭제 (부분 산출물 purge).
+    - **진행 중** (pending/downloading/subtitle_processing/translating/rendering):
+      cancel 시맨틱 — failed/USER_CANCELLED 마킹 + storage purge.
+      DB row 는 감사 목적으로 보존. SSE ``job.failed`` 이벤트 발행.
+      spec Clarifications 2026-05-27 / FR-028 매핑.
+    - **종결** (completed/failed): hard delete — storage purge + DB row 영구 제거.
+      cascade 로 SubtitleTrack/Cue/Asset/JobEvent 등도 함께 제거.
+      spec Clarifications 2026-05-28 / FR-030a 매핑.
 
-    Celery 작업 ID 는 별도로 보관되지 않으므로 revoke 는 생략한다 — 워커는
-    매 단계 진입 시 ``video_job.status`` 를 다시 확인하여 ``failed`` 면 즉시
-    중단한다 (작업 자체적 협조 취소).
+    응답 envelope ``data.action`` 으로 어떤 동작이 일어났는지 구분 가능:
+    ``"cancelled"`` 또는 ``"deleted"``.
+    그 외 ``data`` 키는 VideoJob 필드(id/status/...) 와 동일 (backward compatible).
 
     Returns:
-        표준 success envelope (data = USER_CANCELLED 상태로 갱신된 VideoJob).
+        표준 success envelope. data = {...VideoJob, action}.
+        - cancelled: data.status="failed", data.error_code="USER_CANCELLED", action="cancelled".
+        - deleted:   data = 삭제 직전 VideoJob 스냅샷 + action="deleted".
 
     Raises:
         NotFoundError: 존재하지 않는 job_id → 404.
-        IllegalStateTransitionError: 종결 상태 작업 → 409 ILLEGAL_STATE.
     """
     request_id: str = getattr(request.state, "request_id", "")
-
-    # USER_CANCELLED 오류 메타 — mark_failed / publish_failed 양쪽이 동일한 값을 사용한다.
-    _CANCEL_ERROR_STAGE = "user"
-    _CANCEL_ERROR_CODE = "USER_CANCELLED"
-    _CANCEL_ERROR_MESSAGE = "사용자가 작업을 취소했습니다"
 
     # 1) 존재 확인 (NotFoundError → 404)
     current = await service.get(job_id)
 
-    # 2) 종결 상태 확인 — completed / failed 는 취소 불가
+    # 2) 종결 상태 → hard delete 경로
     if current.status in TERMINAL_STATUSES:
-        raise IllegalStateTransitionError(
-            f"종결된 작업은 취소할 수 없습니다 (status={current.status.value})",
-            details={"job_id": job_id, "status": current.status.value},
+        snapshot = await service.delete_terminal(job_id)
+        # DB 커밋을 먼저 영속화 → 그 후 storage purge (실패해도 응답 성공)
+        await session.commit()
+        _purge_job_storage(job_id)
+        logger.info("job.deleted", extra={"job_id": job_id})
+        return success_envelope(
+            {**snapshot.model_dump(mode="json"), "action": "deleted"},
+            request_id,
         )
 
-    # 3) failed 전이 + USER_CANCELLED 기록
+    # 3) 진행 중 → cancel 경로 (기존 동작)
+    _CANCEL_ERROR_STAGE = "user"
+    _CANCEL_ERROR_CODE = "USER_CANCELLED"
+    _CANCEL_ERROR_MESSAGE = "사용자가 작업을 취소했습니다"
+
     cancelled = await service.mark_failed(
         job_id,
         error_stage=_CANCEL_ERROR_STAGE,
@@ -221,8 +228,6 @@ async def cancel_job(
         error_message=_CANCEL_ERROR_MESSAGE,
     )
 
-    # 4) ``job.failed`` SSE 이벤트 발행 — SSE 구독 중인 클라이언트가 취소를
-    #    즉시 학습하고, 끊긴 클라이언트도 Last-Event-ID replay 로 따라잡을 수 있게 한다.
     publisher = JobEventPublisher(session=session, bus=bus)
     await publisher.publish_failed(
         job_id=job_id,
@@ -231,14 +236,12 @@ async def cancel_job(
         error_message=_CANCEL_ERROR_MESSAGE,
     )
 
-    # 5) DB 상태를 먼저 영속화한 뒤 디렉터리를 purge 한다.
-    #    dep teardown 의 commit 실패 시 디렉터리만 삭제되고 전이 기록이 사라지는
-    #    race 를 막기 위해 명시적으로 커밋 → 그 후에만 purge 를 수행한다.
-    #    (teardown 의 추가 commit 은 no-op 으로 안전하다.)
+    # DB 상태 영속화 후 storage purge (race 방지: 기존 로직 그대로)
     await session.commit()
-
-    # 6) 디렉터리 purge — 실패해도 응답은 성공
     _purge_job_storage(job_id)
 
     logger.info("job.cancelled", extra={"job_id": job_id})
-    return success_envelope(cancelled.model_dump(mode="json"), request_id)
+    return success_envelope(
+        {**cancelled.model_dump(mode="json"), "action": "cancelled"},
+        request_id,
+    )

@@ -38,9 +38,27 @@
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*GATE: Phase 0 전 통과 필수. Phase 1 설계 후 재검토.*
 
-[Gates determined based on constitution file]
+`.specify/memory/constitution.md` v1.1.0에서 도출한 게이트. 각 항목은 예/아니오
+질문이며, "아니오"는 아래 Complexity Tracking에 사유와 함께 기록해야 한다.
+
+- **SDD First (I)**: PRD / Domain Model / API Contract / UX Flow / Sequence Diagram / Acceptance Criteria / Test Specification이 존재하거나 Phase 1 산출물로 예정되어 있는가?
+- **Architecture First (II)**:
+  - Layered architecture(API → Service → Domain → Infrastructure)를 따르는가?
+  - 장기 작업은 Celery로 디스패치되는가(동기 blocking endpoint 없음)?
+  - API는 stateless인가?
+- **AI-Native Development (III)**: 모듈이 작고 단일 목적이며 self-documenting한 이름을 갖는가? giant file 계획 없음?
+- **macOS Native Development (IV)**: Docker 없이 macOS(Apple Silicon, Homebrew, `venv`)에서 end-to-end 동작하는가?
+- **Korean-First Documentation (V)**: 본 기능의 모든 마크다운 산출물(spec / plan / tasks / ADR 등)이 한국어로 작성되는가?
+- **Always-On Logging (VI)**: backend 로그(`logs/backend/app.log`)와 frontend access 로그(`logs/frontend/access.log`)가 모든 환경에서 항상 기록되도록 계획되었는가? 기본 레벨 INFO, file sink 비활성화 옵션 없음, 시크릿 마스킹 적용?
+- **번역 Provider 추상화**: 번역 관련 기능이라면 vendor SDK가 아닌 `TranslationProvider` 추상화에 의존하는가?
+- **Queue-Based Processing**: download / extraction / translation / ffmpeg는 Celery task로 실행되는가(inline 처리 없음)?
+- **보안**: URL validation, path sanitization, shell interpolation 없음, hardcoded secret 없음?
+- **API 표준**: 응답에 `success` / `error_code` / `message` / `request_id` 포함, OpenAPI 자동 생성, `/v1`부터 versioning?
+- **테스트**: 필요한 테스트 카테고리(unit / integration / async pipeline / Celery worker / media validation as applicable)가 계획됨?
+- **코딩 표준**: Python(Ruff / Black / mypy / pytest, type hint, async-first), TypeScript(strict, no `any`, generated API types) 준수?
+- **금지 항목**: Forbidden Practices(god file, 동기 long-running endpoint, hardcoded secret, shell interpolation, Docker 의존, provider-coupled translation, 영문 마크다운 산출물) 미포함?
 
 ## Project Structure
 
