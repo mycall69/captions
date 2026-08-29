@@ -96,3 +96,12 @@ captions/
 - 기여 가이드: 본 저장소는 [Spec Kit](https://github.com/github/spec-kit) 워크플로우를 따른다.
   새 기능은 `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → 구현 → `/speckit-analyze` 순서를 거치며,
   모든 PR은 헌법 게이트(테스트·문서·번역 provider 추상화·한국어 마크다운)를 통과해야 한다.
+- **`.specify/feature.json` 재생성 안내**: Spec Kit v1.0.1부터 현재 작업 중인 feature 디렉터리는
+  git 브랜치 이름이 아니라 `.specify/feature.json`(머신 로컬 상태, git 추적 제외)으로만 결정된다.
+  브랜치를 전환하거나 새로 clone한 직후 `check-prerequisites.sh` 등 Spec Kit 스크립트가
+  `"ERROR: Feature directory not found"`를 내면, 아래처럼 현재 feature를 가리키도록 파일을 다시
+  만들어주면 된다 (`/speckit-plan` 등 Spec Kit 명령을 한 번 실행해도 자동으로 재생성된다).
+
+  ```bash
+  echo '{"feature_directory":"specs/001-dual-subtitle-mvp"}' > .specify/feature.json
+  ```
